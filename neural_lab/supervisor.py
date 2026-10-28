@@ -16,6 +16,7 @@ import time
 import uuid
 
 from neural_lab.planner import APIPlanner, DemoPlanner, PlannerError
+from neural_lab.codex_planner import CodexPlanner
 from neural_lab.runner import CleanupError, DockerRunner
 
 
@@ -152,8 +153,10 @@ def experiment_step(journal, planner, runner, stop, *, max_attempts, budget_seco
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=Path(".neural-lab"))
-    parser.add_argument("--planner", choices=("demo", "api"), default="demo")
+    parser.add_argument("--planner", choices=("demo", "api", "codex"), default="demo")
     parser.add_argument("--model")
+    parser.add_argument("--codex-home", type=Path)
+    parser.add_argument("--planning-timeout-seconds", type=int, default=600)
     parser.add_argument("--api-url", default="https://api.openai.com/v1/chat/completions")
     parser.add_argument("--api-key-env", default="NEURAL_LAB_API_KEY")
     parser.add_argument("--image", default="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime")
@@ -169,7 +172,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if os.getuid() == 0:
         parser.error("Run as a regular Linux user, without sudo")
-    if min(args.max_attempts, args.timeout_seconds, args.max_consecutive_failures) < 1:
+    if min(args.max_attempts, args.timeout_seconds, args.max_consecutive_failures, args.planning_timeout_seconds) < 1:
         parser.error("Attempt, timeout, and failure limits must be positive")
     if args.budget_seconds < args.timeout_seconds:
         parser.error("Runtime budget must cover at least one experiment timeout")
@@ -188,14 +191,23 @@ def main(argv=None):
     with instance_lock(args.state_dir):
         journal = Journal(args.state_dir)
         try:
-            planner = DemoPlanner() if args.planner == "demo" else APIPlanner(
-                args.model, url=args.api_url, key_env=args.api_key_env,
-                runtime_seconds=args.timeout_seconds,
-            )
             runner = DockerRunner(journal.owner, image=args.image,
                                   gpu=None if args.cpu else args.gpu, timeout=args.timeout_seconds)
             runner.recover()
             journal.recover()
+            if args.planner == "demo":
+                planner = DemoPlanner()
+            elif args.planner == "codex":
+                planner = CodexPlanner(
+                    journal.owner, auth_dir=args.codex_home, model=args.model,
+                    runtime_seconds=args.timeout_seconds, timeout=args.planning_timeout_seconds,
+                    stop=stop,
+                )
+            else:
+                planner = APIPlanner(
+                    args.model, url=args.api_url, key_env=args.api_key_env,
+                    runtime_seconds=args.timeout_seconds,
+                )
             while not stop.is_set():
                 failures = journal.failures()
                 if failures >= args.max_consecutive_failures:

@@ -4,7 +4,7 @@ A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
 **Current status:** GPU sandbox, offline visualizations, and a bounded persistent
-experiment loop with demo and API-backed planners. Independent evaluation,
+experiment loop with demo, Codex CLI, and API-backed planners. Independent evaluation,
 Hugging Face publishing, and unattended-operation hardening remain to be built.
 The Compose service stays idle; the supervisor launches disposable workers.
 
@@ -49,7 +49,17 @@ experiments or implement a research loop.
 
 ## Agent loop
 
-Run one synthetic research experiment without an API key:
+Use your ChatGPT account through the isolated Codex CLI planner:
+
+```bash
+bash scripts/codex-login.sh
+python3 -m neural_lab.supervisor --planner codex --once
+```
+
+See [Codex subscription setup and limits](docs/codex.md). GPU workers never receive
+the Codex login. Codex usage is subject to your account's allowance and credits.
+
+Or run one synthetic research experiment without an account or API key:
 
 ```bash
 python3 -m neural_lab.supervisor --once

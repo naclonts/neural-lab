@@ -6,3 +6,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .neural-lab/
+
+# Never commit Codex authentication if configured inside the checkout.
+.codex/
+.codex-auth/

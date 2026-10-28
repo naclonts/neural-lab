@@ -1,9 +1,11 @@
 # Agent loop
 
-The first supervisor supports two planners:
+The first supervisor supports three planners:
 
 - demo: a deterministic MLP architecture search on a fixed synthetic task, with
   held-out evaluation against a linear baseline.
+- codex: the official Codex CLI with ChatGPT login in a separate planning container.
+  See [subscription setup](codex.md); no API key is needed.
 - api: an OpenAI-compatible Chat Completions endpoint proposes hypotheses and
   standalone training scripts using recent experiment outcomes.
 

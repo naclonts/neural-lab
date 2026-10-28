@@ -17,17 +17,24 @@ class CleanupError(RuntimeError):
 MAX_RESULT_BYTES = 65536
 
 
-def read_result(directory):
-    """Read only a bounded regular file; never follow a worker-created symlink."""
-    fd = os.open(Path(directory) / "result.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+def read_json_file(directory, filename, *, limit=MAX_RESULT_BYTES):
+    """Read one bounded regular file from a trusted, fixed parent mountpoint."""
+    if filename != os.path.basename(filename):
+        raise ValueError("Only direct child files may be read")
+    fd = os.open(Path(directory) / filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         metadata = os.fstat(stream.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_RESULT_BYTES:
-            raise ValueError("Result must be a regular file under 64 KiB")
-        raw = stream.read(MAX_RESULT_BYTES + 1)
-    if len(raw) > MAX_RESULT_BYTES:
-        raise ValueError("Result exceeds 64 KiB")
-    value = json.loads(raw)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise ValueError("JSON must be a bounded regular file")
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("JSON exceeds size limit")
+    return json.loads(raw)
+
+
+def read_result(directory):
+    """Validate worker-reported metrics without following symlinks."""
+    value = read_json_file(directory, "result.json")
     if not isinstance(value, dict):
         raise ValueError("Result must be an object")
     metrics = value.get("metrics")
