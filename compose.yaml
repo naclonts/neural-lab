@@ -1,0 +1,44 @@
+name: neural-lab
+services:
+  lab:
+    image: pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+    user: "${LAB_UID:?Run bash scripts/setup.sh first}:${LAB_GID:?Run bash scripts/setup.sh first}"
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    init: true
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./experiments
+        target: /workspace
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1g,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 4
+    mem_limit: 8g
+    memswap_limit: 8g
+    pids_limit: 256
+    shm_size: 1g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    environment:
+      HOME: /tmp
+      HF_HOME: /workspace/.cache/huggingface
+      PYTHONDONTWRITEBYTECODE: "1"
+      OMP_NUM_THREADS: "4"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
