@@ -47,6 +47,24 @@ Stopping the container preserves `experiments/`. The `unless-stopped` policy
 restarts this idle environment after daemon restarts; it does not recover
 experiments or implement a research loop.
 
+## Local checks and progress
+
+After setup and Codex login, validate the laptop:
+
+```bash
+python3 -m neural_lab.manage doctor --gpu-test
+```
+
+Inspect results at any time, including while the loop runs:
+
+```bash
+python3 -m neural_lab.manage status
+```
+
+The supervisor checks readiness before consuming planner attempts and pauses
+before planning if free disk space drops below 10 GiB. See
+[local operations](docs/local-operations.md) for checks and remaining limits.
+
 ## Agent loop
 
 Use your ChatGPT account through the isolated Codex CLI planner:

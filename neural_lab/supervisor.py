@@ -18,6 +18,7 @@ import uuid
 from neural_lab.planner import APIPlanner, DemoPlanner, PlannerError
 from neural_lab.codex_planner import CodexPlanner
 from neural_lab.runner import CleanupError, DockerRunner
+from neural_lab.manage import LowDiskSpace, check_readiness, require_disk_space
 
 
 class BudgetExhausted(RuntimeError):
@@ -164,6 +165,7 @@ def main(argv=None):
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=20)
+    parser.add_argument("--min-free-gb", type=float, default=10)
     parser.add_argument("--budget-seconds", type=int, default=7200)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--idle-seconds", type=float, default=60)
@@ -178,6 +180,8 @@ def main(argv=None):
         parser.error("Runtime budget must cover at least one experiment timeout")
     if not all(math.isfinite(value) and value >= 0 for value in (args.idle_seconds, args.backoff_seconds)):
         parser.error("Delays must be non-negative")
+    if not math.isfinite(args.min_free_gb) or args.min_free_gb < 1:
+        parser.error("--min-free-gb must be finite and at least 1")
     if args.planner == "api" and not args.model:
         parser.error("--model is required for the API planner")
 
@@ -195,6 +199,14 @@ def main(argv=None):
                                   gpu=None if args.cpu else args.gpu, timeout=args.timeout_seconds)
             runner.recover()
             journal.recover()
+            checks = check_readiness(
+                state_dir=args.state_dir, image=args.image, planner=args.planner,
+                auth_dir=args.codex_home, gpu=None if args.cpu else args.gpu,
+                minimum_gb=args.min_free_gb,
+            )
+            if not all(item["ok"] for item in checks):
+                print(json.dumps({"status": "preflight_failed", "checks": checks}), flush=True)
+                return 1
             if args.planner == "demo":
                 planner = DemoPlanner()
             elif args.planner == "codex":
@@ -215,6 +227,11 @@ def main(argv=None):
                     break
                 # Backoff is applied before work, including after restart.
                 if failures and stop.wait(min(3600, args.backoff_seconds * 2 ** min(failures - 1, 10))):
+                    break
+                try:
+                    require_disk_space(args.state_dir, args.min_free_gb)
+                except LowDiskSpace as exc:
+                    print(json.dumps({"status": "paused", "reason": str(exc)}), flush=True)
                     break
                 try:
                     status = experiment_step(

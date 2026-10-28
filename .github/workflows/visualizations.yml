@@ -22,6 +22,8 @@ jobs:
           docker compose -f compose.yaml -f compose.visualization.yaml config --quiet
       - name: Pull lightweight CPU isolation-test image
         run: docker pull python:3.11-slim
+      - name: Check doctor against the real local Docker daemon
+        run: python -m neural_lab.manage doctor --planner demo --cpu --image python:3.11-slim --min-free-gb 1
       - name: Build isolated Codex CLI image
         run: docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile docker
       - name: Check real Codex flags without authentication or inference

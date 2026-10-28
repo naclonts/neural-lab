@@ -13,6 +13,15 @@ The host supervisor uses Python 3.10+ and stdlib only. PyTorch runs in the worke
 The API planner is a one-request experiment planner, not an interactive coding
 agent with an iterative shell session. Failed scripts inform the next proposal.
 
+## Local readiness and status
+
+The supervisor checks local readiness before planning. Run
+`python3 -m neural_lab.manage doctor --gpu-test` for a real CUDA setup test and
+`python3 -m neural_lab.manage status` to inspect progress without changing state.
+The loop pauses before a planner call if the state filesystem has less than
+`--min-free-gb` free (default 10 GiB). See [local operations](local-operations.md).
+This is an admission guard, not an enforced per-run storage quota.
+
 ## Start small
 
 After installing Docker, NVIDIA Container Toolkit, and running the GPU smoke test:
