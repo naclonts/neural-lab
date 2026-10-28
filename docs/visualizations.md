@@ -91,11 +91,37 @@ workers: untrusted code can replace generated files.
 
 ## Research-loop integration
 
-The planned supervisor should request this export after training and before
-publishing, record its status in the experiment journal, and include SVG/JSON and
-reviewed HTML alongside model artifacts. Visualization failure must be recorded
-without mislabeling a trained model as a failed training run. The autonomous
-supervisor and Hugging Face publisher are not implemented yet.
+The demo worker exports visualizations after training, and the API/Codex planners
+are instructed to attempt the same export. The supervisor journals worker-reported
+findings. A future publishing step should include SVG/JSON and reviewed HTML
+alongside model artifacts. Visualization failure must be recorded without
+mislabeling a trained model as a failed training run. The Hugging Face publisher
+is not implemented yet.
+
+## Planned: julrog/nn_vis integration
+
+Add [julrog/nn_vis](https://github.com/julrog/nn_vis) as an optional 3D
+visualization backend alongside the existing FX diagrams. This integration is
+planned; no upstream code or dependencies are currently included.
+
+- [ ] Review the upstream license, citation requirements, dependencies, and
+  supported model types. Pin a compatible upstream revision.
+- [ ] Prototype a conversion from a small trained PyTorch MLP into the visualizer's
+  network and importance-processing format. Document unsupported architectures;
+  do not substitute our sampled activation values for its importance estimates.
+- [ ] Run preprocessing with explicit time and memory limits inside a separate
+  sandbox. Keep account credentials and host personal files outside it.
+- [ ] Check headless rendering support for unattended local GPU runs. Save 3D
+  snapshots or short clips as experiment artifacts; keep desktop interaction
+  optional and avoid granting workers access to the host display.
+- [ ] Store outputs under each run's `visualizations/julrog/` directory, with the
+  upstream revision, processing parameters, seeds, and model provenance.
+- [ ] Record unsupported models and rendering failures without failing training.
+  Continue producing the existing HTML/SVG/JSON/DOT artifacts.
+
+The first milestone is a reproducible 3D visualization of one trained MLP, with a
+documented conversion and sandboxed rendering workflow. Broader model support
+comes after that proof of integration.
 
 ## Other tools considered
 
