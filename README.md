@@ -3,7 +3,7 @@
 A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
-**Current status:** GPU sandbox scaffolding only. The container stays idle until
+**Current status:** GPU sandbox scaffolding with offline network visualizations. The container stays idle until
 you execute a command. An autonomous planner, experiment supervisor, evaluation
 pipeline, and Hugging Face publishing are not implemented yet.
 
@@ -45,6 +45,20 @@ docker compose down
 Stopping the container preserves `experiments/`. The `unless-stopped` policy
 restarts this idle environment after daemon restarts; it does not recover
 experiments or implement a research loop.
+
+## Network visualizations
+
+Generate interactive graphs, SVG layer diagrams, and JSON/DOT exports for an MLP,
+CNN, and residual network inside a disposable sandbox:
+
+```bash
+bash scripts/visualize-demo.sh
+```
+
+Open `experiments/visualizations/mlp/index.html` locally. The view shows tensor
+shapes, parameter counts, real branch edges, and sampled activation heatmaps.
+See [visualization usage and limitations](docs/visualizations.md) to export your
+own models.
 
 ## Sandbox boundaries
 

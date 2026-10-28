@@ -1,0 +1,18 @@
+# Optional overlay. Mount only reviewed tooling as read-only code.
+services:
+  lab:
+    volumes:
+      - type: bind
+        source: ./neural_lab
+        target: /opt/neural-lab/neural_lab
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./examples
+        target: /opt/neural-lab/examples
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      PYTHONPATH: /opt/neural-lab
