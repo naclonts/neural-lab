@@ -10,9 +10,13 @@
 6. A separate publisher uploads qualifying artifacts to Hugging Face.
 7. Repeat with bounded retries and backoff.
 
-The current Compose service is an idle development sandbox. The production
-supervisor should create a disposable container per run and expose only that
-run's directory. A worker must not choose its own mounts, Docker flags, or limits.
+The Compose service is an idle development sandbox. The first supervisor now
+creates a disposable container per run, exposes only that run's input/output and
+reviewed tooling, and journals worker-reported outcomes. It supports deterministic
+demo planning and API-backed experiment proposals. Independent evaluation and
+publishing remain planned. See [agent-loop usage](agent-loop.md).
+
+A worker cannot choose its own mounts, Docker flags, or limits.
 
 ## Trust boundaries
 
@@ -28,9 +32,9 @@ pickle files on the host. Prefer safetensors for weights.
 
 ## Before unattended operation
 
-- Enforce per-run wall-clock limits and remove abandoned containers after crashes.
-- Persist journal state and reserve budgets before launching work.
-- Back off after failures and stop after repeated failures.
+The supervisor implements runtime deadlines and cleanup, journaled reservations,
+failure backoff/circuit breaking, and single-instance locking. Remaining work:
+
 - Enforce storage quotas and a retention policy; bound stdout and stderr.
 - Restrict outbound traffic through an enforced gateway that blocks private,
   loopback, link-local, and metadata destinations. Proxy environment variables
@@ -41,8 +45,8 @@ pickle files on the host. Prefer safetensors for weights.
 - Evaluate on held-out data against reproducible baselines with recorded seeds.
 - Publish model cards documenting data provenance, evaluation, and limitations.
 - Default initial uploads to private repositories with a narrowly scoped token.
-- Use a supervisor service with graceful shutdown, a single-instance lock, and
-  restart recovery. Start with one experiment at a time.
+- Add an operator-installed service for unattended restarts after hardening.
+  The current supervisor already handles graceful shutdown and restart recovery.
 
 Architecture variation is not evidence of research novelty. Describe results
 as exploratory until comparisons and evaluation support stronger claims.

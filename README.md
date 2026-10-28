@@ -3,9 +3,10 @@
 A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
-**Current status:** GPU sandbox scaffolding with offline network visualizations. The container stays idle until
-you execute a command. An autonomous planner, experiment supervisor, evaluation
-pipeline, and Hugging Face publishing are not implemented yet.
+**Current status:** GPU sandbox, offline visualizations, and a bounded persistent
+experiment loop with demo and API-backed planners. Independent evaluation,
+Hugging Face publishing, and unattended-operation hardening remain to be built.
+The Compose service stays idle; the supervisor launches disposable workers.
 
 ## Requirements
 
@@ -45,6 +46,22 @@ docker compose down
 Stopping the container preserves `experiments/`. The `unless-stopped` policy
 restarts this idle environment after daemon restarts; it does not recover
 experiments or implement a research loop.
+
+## Agent loop
+
+Run one synthetic research experiment without an API key:
+
+```bash
+python3 -m neural_lab.supervisor --once
+```
+
+The supervisor creates a disposable GPU worker, compares an MLP candidate against
+a linear baseline, exports visualizations, journals results, and removes the
+container. Run without `--once` for a bounded sequence. API-backed planning is
+available with `--planner api --model YOUR_MODEL_NAME`.
+
+See [agent loop usage, budgets, and recovery](docs/agent-loop.md). This is a
+development loop; network egress and disk quotas still need hardening.
 
 ## Network visualizations
 
@@ -89,6 +106,6 @@ before a long-running deployment.
 `scripts/smoke-test.sh` checks the non-root user, read-only root mount, writable
 workspace/tmp, and one real GPU training step.
 
-This scaffold was prepared without a working execution environment. The scripts
-and GPU configuration have not been executed by the authoring agent. Run the
-checks on the target laptop before relying on the setup.
+GitHub Actions validates Compose configuration, network visualization exports,
+persistent supervisor state, and real CPU Docker isolation/timeout behavior.
+The NVIDIA driver and GPU configuration still need validation on the target laptop.
