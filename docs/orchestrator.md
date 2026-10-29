@@ -1,106 +1,113 @@
 # Headless research stack
 
-`compose.research.yaml` separates two processes. The `worker` polls the persistent
-SQLite queue and launches disposable GPU training containers. The `orchestrator`
-uses Codex with ChatGPT sign-in to research, implement experiment scripts, and
-enqueue them. The orchestrator prompt asks it to delegate independent work to
-Codex subagents. Worker jobs are deterministic and make no OpenAI calls.
+The stack runs an independent GPU job worker and a Codex research orchestrator.
+The orchestrator researches architectures, delegates to subagents, implements
+training scripts, and queues them. Queued jobs make no OpenAI calls and continue
+while the orchestrator waits for subscription capacity.
 
-## Set up the local worker
+## Start on the laptop
 
-Run from this repository on a Linux host with Docker Compose and NVIDIA Container
-Toolkit installed:
+Use a regular Linux account with access to the local Docker daemon and a working
+NVIDIA driver plus NVIDIA Container Toolkit:
 
 ```bash
 bash scripts/setup.sh
-docker compose pull
-bash scripts/smoke-test.sh
-python3 -m neural_lab.manage doctor --gpu-test
-bash scripts/enqueue-starter-jobs.sh
-docker compose -f compose.research.yaml up -d --build worker
-```
-
-If `.env` existed before this research stack was added, `scripts/setup.sh` adds
-the missing `LAB_REPO_DIR`, `DOCKER_GID`, and `NEURAL_LAB_CODEX_HOME` values.
-Check those paths after moving the checkout.
-
-Inspect the queue and container logs:
-
-```bash
-python3 -m neural_lab.queue status
-docker compose -f compose.research.yaml logs --tail=100 worker
-docker compose -f compose.research.yaml ps
-```
-
-The three starter scripts compare a linear control, a deep MLP, and a residual
-MLP on the same seeded synthetic task. They establish the workflow; their results
-do not establish architectural novelty. See [queue operations](queue.md) to add
-a reviewed script and inspect saved outputs in `.neural-lab/queue-outputs/`.
-
-## Codex sign-in and research sessions
-
-The dedicated sign-in directory is outside this public Git checkout. Authenticate
-locally and confirm that Codex reports ChatGPT sign-in:
-
-```bash
 bash scripts/codex-login.sh
-bash scripts/codex-login.sh status
+bash scripts/research.sh start
 ```
 
-The directory defaults to `~/.local/share/neural-lab/codex` and is bind-mounted
-only into the orchestrator. It contains bearer credentials: keep it private, never
-commit it, and never mount it into a training worker. `.env` and `.neural-lab/`
-are Git-ignored, but inspect `git status` before any public push.
-Codex CLI supports ChatGPT account sign-in and headless `codex exec`; its usage
-counts toward ChatGPT plan limits and applicable ChatGPT credits, without using
-OpenAI API-key billing. [Codex CLI](https://learn.chatgpt.com/docs/codex/cli),
-[non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
+The login script opens the official ChatGPT device login flow. Complete that in
+your browser once. Credentials stay in a dedicated directory outside the public
+checkout, defaulting to `~/.local/share/neural-lab/codex`. The startup script pulls
+the GPU image, checks real GPU execution, builds both research containers, and
+queues the starter jobs. Repeated startup does not duplicate existing starter or
+candidate jobs.
 
-**The orchestrator is intentionally gated today.** As of October 28, 2026, OpenAI
-documents GPT-6.1 Sol with a default **500,000-token** context window in Codex.
-The API model's 1,050,000-token specification does not verify that full window
-for ChatGPT subscription-backed Codex. GPT-5.4's experimental 1M Codex support
-ended for ChatGPT sign-in on August 31, 2026. No current subscription-backed
-Codex model has a documented, verified million-token window. Setting
-`model_context_window` in Codex config only declares client metadata; verify
-actual model access and context capacity before setting
-`NEURAL_LAB_ORCH_MODEL` and `NEURAL_LAB_CONTEXT_TOKENS`. [Codex models](https://learn.chatgpt.com/docs/models),
-[API models](https://developers.openai.com/api/docs/models),
-[configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+Setup preserves existing `.env` values and adds missing paths and Docker group
+settings. Check `LAB_REPO_DIR`, `DOCKER_GID`, and `NEURAL_LAB_CODEX_HOME` after
+moving a checkout or changing Docker permissions. `.env`, `.neural-lab/`, logs,
+notes, and authentication are excluded from Git. The Docker build context also
+excludes private state. Public commits must contain only reviewed source files.
 
-Once a model and its context limit are verified for the signed-in account, set
-both variables in the local `.env`, for example using the verified model ID and
-token count, then start:
+This task's managed shell may not expose the laptop's Docker socket or NVIDIA
+devices. A passing static Compose check does not establish that GPU training is
+running; the startup GPU check must pass on the laptop.
+
+## Monitor and control
 
 ```bash
-docker compose -f compose.research.yaml up -d --build orchestrator
-docker compose -f compose.research.yaml logs -f orchestrator
+bash scripts/research.sh status
+bash scripts/research.sh logs
+python3 -m neural_lab.queue status
 ```
 
-Do not substitute an API key to satisfy the gate. The orchestrator checks
-`account/read` for `chatgpt` auth and calls the official app-server
-`account/rateLimits/read` method before each Codex session. If quota metadata is
-unavailable, it pauses planning. It compares available primary and secondary
-`usedPercent` windows with the 75% threshold; training jobs already queued keep
-running in the separate worker service. Limit windows and reset times are account
-specific. [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server).
-
-The code starts a fresh `codex exec` session on each cycle. **This does not
-guarantee a live shutdown exactly when context use reaches 50%.** The JSON event
-stream reports usage when a turn completes, so live occupancy and timely handoff
-still need implementation and validation. The orchestrator may also require
-account-specific validation of app-server quota fields before it can run.
-Review `.neural-lab/notes/` for private handoff notes; they are never committed.
-
-Stop the research services with:
+The status command shows queue counts, job metrics, service state, and recent
+logs. Outputs live in `.neural-lab/queue-outputs/<job-id>/`. The initial jobs compare
+three baseline architectures and two candidate designs; see
+[experiment descriptions](experiments.md). These are exploratory experiments,
+with no established novelty or improvement claim.
 
 ```bash
-docker compose -f compose.research.yaml down
+bash scripts/research.sh pause-research
+bash scripts/research.sh resume-research
+bash scripts/research.sh stop
 ```
 
-Stopping services preserves the queue, completed results, and notes in
-`.neural-lab/`. The research worker has Docker daemon access so it can launch
-training containers; only run it from a trusted local checkout. The current
-training boundary still lacks enforced egress and disk quotas, GPU thermal
-monitoring, and independent evaluation. See [architecture](architecture.md) and
-[agent loop](agent-loop.md) before unattended operation.
+Pausing research leaves the GPU worker running. Stopping the stack preserves all
+queue state, results, and notes. Both services restart with Docker unless manually
+stopped. GPU jobs have individual timeouts and run one at a time. See
+[queue recovery](queue.md) for interrupted jobs.
+
+## Model, handoff, and subscription capacity
+
+The default is `gpt-6.1-sol`, which the current Codex catalog reports with a nominal
+500,000-token context window. The orchestrator uses the official app-server
+protocol with ChatGPT login and the OpenAI model provider. It does not use API
+keys or automatically switch to API billing. [Codex models](https://learn.chatgpt.com/docs/models),
+[app-server protocol](https://learn.chatgpt.com/docs/app-server).
+
+Each session starts a new thread and delegates research and implementation to
+subagents. The controller watches `thread/tokenUsage/updated` and interrupts the
+turn when the latest model call reports more than **250,000 tokens**. It then
+shuts down that app-server and starts a fresh session after the configured pause.
+Telemetry arrives between model calls, so crossing the threshold is detected at
+the next update; this cannot stop a model call partway through its token stream.
+The server's effective context window is checked without overriding model
+metadata. A missing or incompatible report causes a pause.
+
+Handoff notes are private under `.neural-lab/notes/`. The controller records token
+usage, session identifiers, interruption reasons, and recent agent messages in an
+atomic checkpoint. The prompt instructs the orchestrator and its subagents to
+write findings incrementally so work survives context rollover or restart.
+[Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents).
+
+Before a session, the controller verifies ChatGPT authentication and reads
+`account/rateLimits/read`. It pauses new model work when any reported primary or
+secondary usage window reaches **75%**, when included usage is explicitly blocked,
+or when usable quota information is unavailable. It also checks quota during
+active work and interrupts the turn if the threshold is reached. It rechecks
+capacity periodically and resumes when the account reports capacity below the
+threshold. The independent GPU worker continues processing queued jobs throughout.
+Usage reads and interruptions are not billing transactions; a model call already
+in flight can finish before a quota update arrives.
+
+ChatGPT subscription allowances and purchased ChatGPT credits are controlled by
+the account. This project does not buy credits, redeem reset credits, or implement
+an API fallback. Keep account credit settings consistent with subscription-only
+use. [App-server account and quota methods](https://learn.chatgpt.com/docs/app-server).
+
+## Container permissions
+
+The orchestrator has a writable container filesystem, internet access, unrestricted
+commands, and passwordless `sudo` inside the container. Routine files are written
+as the laptop UID/GID. Only the repository and dedicated Codex login directory
+are mounted; the host home and Docker socket are absent. The Docker container
+provides the filesystem boundary. The repository and login mounts are intentional
+exceptions and must be treated as trusted inputs to the research agent.
+
+The separate trusted worker receives Docker daemon access so it can launch
+training containers. Its controller code is baked into its image. Training
+containers receive only that job's input/output directories and the shared
+experiment helper package; they receive no Codex credentials or Docker socket.
+The current training boundary still lacks disk quotas and enforced network egress
+restrictions. See [architecture](architecture.md) for those limits.

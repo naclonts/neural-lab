@@ -1,0 +1,8 @@
+# Send only image sources to the Docker daemon. Private state and auth stay local.
+*
+!docker/
+!docker/**
+!neural_lab/
+!neural_lab/**
+**/__pycache__/
+**/*.py[cod]

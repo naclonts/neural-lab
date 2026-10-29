@@ -6,13 +6,18 @@ import json
 import os
 from pathlib import Path
 import select
+import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+from collections import deque
 
 
 PROMPT = """You are the neural-lab research orchestrator. Work in /repo. Use Codex
 subagents for independent literature research, experiment design, and implementation.
+Read /repo/.neural-lab/notes/latest-session.json and earlier notes before work.
 Your objective is novel neural-network architecture experiments with reproducible
 comparisons against the queued baselines. You may edit code and research with internet
 access. Queue deterministic training jobs with `python3 -m neural_lab.queue enqueue
@@ -21,7 +26,9 @@ with `python3 -m neural_lab.queue status`. Keep handoff notes in
 /repo/.neural-lab/notes/ (ignored by Git). Do not put credentials or personal data
 in the public repository. Do not use API keys or paid API credits. Do not modify
 the trusted worker or its Docker boundary to give a training script host access.
-Finish this session with a concise handoff note. A new session will begin later.
+Require subagents to write their findings to /repo/.neural-lab/notes/. Update
+/repo/.neural-lab/notes/ after each completed research result or queued
+experiment. Finish this session with a concise handoff note. A new session will begin later.
 """
 
 
@@ -32,7 +39,8 @@ def rpc_snapshot(timeout: int = 20) -> dict:
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
     requests = [
-        {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "neural-lab", "version": "1"}}},
+        {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "neural-lab", "version": "1"},
+                                                    "capabilities": {"experimentalApi": True}}},
         {"method": "initialized", "params": {}},
         {"id": 2, "method": "account/read", "params": {"refreshToken": False}},
         {"id": 3, "method": "account/rateLimits/read", "params": {"excludeResetCreditDetails": True, "supportsLunaReserve": False}},
@@ -92,7 +100,7 @@ def rpc_snapshot(timeout: int = 20) -> dict:
 
 
 def capacity_ok(snapshot: dict, threshold: int = 75) -> tuple[bool, str]:
-    if snapshot.get("ordinaryUsageAllowed") is not True:
+    if snapshot.get("ordinaryUsageAllowed") is False:
         return False, "included subscription usage unavailable"
     buckets = snapshot.get("rateLimitsByLimitId") or {"default": snapshot.get("rateLimits")}
     percentages = []
@@ -111,62 +119,342 @@ def capacity_ok(snapshot: dict, threshold: int = 75) -> tuple[bool, str]:
     return high < threshold, f"highest subscription window usage {high}%"
 
 
-def run_session(model: str, context_tokens: int, repo: Path, prompt: str) -> tuple[int, int]:
-    """One fresh Codex session per cycle; return code and reported input tokens."""
-    command = [
-        "codex", "exec", "--json", "--ephemeral", "--ignore-user-config",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox", "-C", str(repo),
-        "--model", model, "--enable", "multi_agent",
-        "-c", 'forced_login_method="chatgpt"',
-        "-c", 'check_for_update_on_startup=false',
-        "-",
-    ]
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, text=True, bufsize=1)
-    process.stdin.write(prompt)
-    process.stdin.close()
-    last_input = 0
-    for line in process.stdout:
+class AppServer:
+    """Small buffered JSON-line transport for the Codex app-server."""
+
+    def __init__(self):
+        self.process = subprocess.Popen(
+            ["codex", "app-server", "--stdio", "-c", 'forced_login_method="chatgpt"',
+             "-c", 'model_provider="openai"', "-c", 'web_search="live"',
+             "-c", "check_for_update_on_startup=false", "-c", "features.multi_agent=true"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self.buffer = bytearray()
+        self.pending = deque()
+        self.sequence = 0
+
+    def send(self, method: str, params: dict | None = None) -> int:
+        self.sequence += 1
+        self.process.stdin.write((json.dumps({"id": self.sequence, "method": method,
+                                              "params": params or {}}) + "\n").encode())
+        self.process.stdin.flush()
+        return self.sequence
+
+    def notify(self, method: str, params: dict | None = None):
+        self.process.stdin.write((json.dumps({"method": method, "params": params or {}}) + "\n").encode())
+        self.process.stdin.flush()
+
+    def receive(self, timeout: float) -> dict | None:
+        if self.pending:
+            return self.pending.popleft()
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready, _, _ = select.select([self.process.stdout], [], [], remaining)
+            if not ready:
+                return None
+            chunk = os.read(self.process.stdout.fileno(), 65536)
+            if not chunk:
+                raise RuntimeError("Codex app-server closed unexpectedly")
+            self.buffer.extend(chunk)
+            while b"\n" in self.buffer:
+                line, _, rest = self.buffer.partition(b"\n")
+                self.buffer[:] = rest
+                try:
+                    value = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    self.pending.append(value)
+            if self.pending:
+                return self.pending.popleft()
+
+    def request(self, method: str, params: dict | None = None, timeout: float = 30) -> dict:
+        request_id = self.send(method, params)
+        deadline = time.monotonic() + timeout
+        deferred = []
         try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") == "turn.completed":
-            last_input = max(last_input, int(event.get("usage", {}).get("input_tokens", 0)))
-        if event.get("type") in ("turn.failed", "error"):
-            print(json.dumps({"event": event.get("type")}), flush=True)
-    return process.wait(), last_input
+            while time.monotonic() < deadline:
+                message = self.receive(max(0.001, deadline - time.monotonic()))
+                if message is None:
+                    break
+                if message.get("id") == request_id:
+                    if "error" in message:
+                        raise RuntimeError(f"Codex {method} request failed")
+                    return message.get("result") or {}
+                deferred.append(message)
+            raise RuntimeError(f"Codex {method} request timed out")
+        finally:
+            self.pending.extendleft(reversed(deferred))
+
+    def close(self):
+        try:
+            self.process.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            os.killpg(self.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.process.wait()
+        self.process.stdout.close()
+
+
+def context_usage(notification: dict) -> tuple[int, int]:
+    """Read the active call's tokens and server-reported effective context window."""
+    usage = notification.get("params", {}).get("tokenUsage", {})
+    window = usage.get("modelContextWindow")
+    last = usage.get("last", {})
+    used = last.get("totalTokens")
+    # Codex can reserve part of a nominal 500k window for compaction, so its
+    # effective reported window may be around 475k. The handoff is fixed at 250k.
+    if type(window) is not int or window < 475_000:
+        raise RuntimeError("Active model did not report a compatible 500k context window")
+    if type(used) is not int or used < 0:
+        raise RuntimeError("Codex did not report live context usage")
+    return used, window
+
+
+def context_fraction(notification: dict) -> float:
+    used, window = context_usage(notification)
+    return used / window
+
+
+def write_handoff(repo: Path, state: dict, *, filename: str = "latest-session.json") -> None:
+    """Persist a bounded private checkpoint before interrupting a live turn."""
+    notes = Path(repo) / ".neural-lab" / "notes"
+    notes.mkdir(parents=True, exist_ok=True, mode=0o700)
+    data = json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
+    with tempfile.NamedTemporaryFile(dir=notes, prefix=".latest-session-", delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            os.chmod(temporary, 0o600)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    os.replace(temporary, notes / filename)
+    directory_fd = os.open(notes, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def previous_handoff(repo: Path) -> str:
+    """Snapshot the prior private handoff before replacing latest-session.json."""
+    path = Path(repo) / ".neural-lab" / "notes" / "latest-session.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return ""
+    with os.fdopen(fd, "rb") as stream:
+        raw = stream.read(16385)
+    if len(raw) > 16384:
+        return "Previous handoff was too large; inspect notes manually."
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "Previous handoff was unreadable; inspect notes manually."
+    return json.dumps(value, ensure_ascii=False)
+
+
+def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int = 60,
+                usage_timeout_seconds: float = 20,
+                stop: threading.Event | None = None) -> dict:
+    """Run one fresh turn, interrupting on live context or subscription limits."""
+    server = AppServer()
+    stop = stop or threading.Event()
+    try:
+        old_handoff = previous_handoff(repo)
+        if old_handoff:
+            prompt += "\nPrevious session handoff (private local state):\n" + old_handoff
+        server.request("initialize", {"clientInfo": {"name": "neural-lab", "version": "1"},
+                                      "capabilities": {"experimentalApi": True}})
+        server.notify("initialized")
+        if stop.is_set():
+            return {"exit_code": 1, "reason": "shutdown requested"}
+        started = server.request("thread/start", {
+            "cwd": str(repo), "model": model, "modelProvider": "openai",
+            "approvalPolicy": "never", "sandbox": "danger-full-access", "ephemeral": True,
+            "config": {"forced_login_method": "chatgpt", "model_provider": "openai",
+                       "web_search": "live", "features": {"multi_agent": True}},
+        })
+        thread_id = started.get("thread", {}).get("id")
+        if not thread_id or started.get("modelProvider") != "openai":
+            raise RuntimeError("Codex did not start an OpenAI subscription thread")
+        turn = server.request("turn/start", {
+            "threadId": thread_id, "input": [{"type": "text", "text": prompt, "text_elements": []}],
+        }).get("turn") or {}
+        turn_id = turn.get("id")
+        if not turn_id:
+            raise RuntimeError("Codex did not return a turn ID")
+        reason = None
+        fraction = None
+        used_tokens = None
+        context_window = None
+        telemetry_seen = False
+        recent_messages = deque(maxlen=4)
+        handoff = {"thread_id": thread_id, "turn_id": turn_id, "model": model,
+                   "reason": "running", "last_tokens": None, "model_context_window": None,
+                   "recent_agent_messages": [], "updated_at": time.time()}
+        write_handoff(repo, handoff)
+        next_usage_poll = time.monotonic() + usage_poll_seconds
+        poll_id = None
+        poll_deadline = None
+        interrupt_deadline = None
+        while True:
+            now = time.monotonic()
+            if stop.is_set():
+                reason = reason or "shutdown requested"
+            if reason and interrupt_deadline and now >= interrupt_deadline:
+                raise RuntimeError("Codex turn did not stop after interruption")
+            if poll_id is not None and poll_deadline is not None and now >= poll_deadline:
+                reason = "subscription usage check timed out"
+            if reason and interrupt_deadline is None:
+                handoff.update(reason=reason, last_tokens=used_tokens,
+                               model_context_window=context_window,
+                               recent_agent_messages=list(recent_messages), updated_at=time.time())
+                write_handoff(repo, handoff)
+                server.send("turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+                interrupt_deadline = time.monotonic() + 30
+            if not reason and now >= next_usage_poll and poll_id is None:
+                poll_id = server.send("account/rateLimits/read", {
+                    "excludeResetCreditDetails": True, "supportsLunaReserve": False,
+                })
+                next_usage_poll = now + usage_poll_seconds
+                poll_deadline = now + usage_timeout_seconds
+            message = server.receive(min(1.0, max(0.001, next_usage_poll - now)) if not reason else 1.0)
+            if message is None:
+                continue
+            if poll_id is not None and message.get("id") == poll_id:
+                poll_id = None
+                poll_deadline = None
+                if "error" in message:
+                    reason = "subscription usage check failed"
+                else:
+                    permitted, detail = capacity_ok(message.get("result") or {})
+                    if not permitted:
+                        reason = detail
+            elif message.get("method") == "account/rateLimits/updated":
+                update = message.get("params") or {}
+                permitted, detail = capacity_ok(update)
+                if not permitted and detail != "subscription usage percentage unavailable":
+                    reason = detail
+                elif poll_id is None:
+                    poll_id = server.send("account/rateLimits/read", {
+                        "excludeResetCreditDetails": True, "supportsLunaReserve": False,
+                    })
+                    poll_deadline = time.monotonic() + usage_timeout_seconds
+            elif message.get("method") == "thread/tokenUsage/updated":
+                params = message.get("params") or {}
+                if params.get("threadId") != thread_id or params.get("turnId") != turn_id:
+                    continue
+                telemetry_seen = True
+                try:
+                    used_tokens, context_window = context_usage(message)
+                    fraction = used_tokens / context_window
+                except RuntimeError as exc:
+                    reason = str(exc)
+                else:
+                    if used_tokens > 250_000:
+                        reason = "context exceeded 250000 tokens"
+                handoff.update(last_tokens=used_tokens, model_context_window=context_window,
+                               reason=reason or "running", updated_at=time.time())
+                write_handoff(repo, handoff)
+            elif message.get("method") == "item/completed":
+                params = message.get("params") or {}
+                if params.get("threadId") != thread_id or params.get("turnId") != turn_id:
+                    continue
+                item = params.get("item") or {}
+                if item.get("type") == "agentMessage" and isinstance(item.get("text"), str):
+                    recent_messages.append(item["text"][-2000:])
+                    handoff.update(recent_agent_messages=list(recent_messages), updated_at=time.time())
+                    write_handoff(repo, handoff)
+            elif message.get("method") == "turn/completed":
+                params = message.get("params") or {}
+                if params.get("threadId") != thread_id or params.get("turn", {}).get("id") != turn_id:
+                    continue
+                if not telemetry_seen:
+                    reason = reason or "live context telemetry unavailable"
+                status = params["turn"].get("status")
+                handoff.update(reason=reason or status, last_tokens=used_tokens,
+                               model_context_window=context_window,
+                               recent_agent_messages=list(recent_messages), updated_at=time.time())
+                write_handoff(repo, handoff)
+                success = (status == "completed" and reason is None) or reason == "context exceeded 250000 tokens"
+                return {"exit_code": 0 if success else 1,
+                        "reason": reason or status, "context_fraction": fraction,
+                        "context_window_verified": telemetry_seen and fraction is not None,
+                        "last_tokens": used_tokens, "model_context_window": context_window}
+    except Exception as exc:
+        if "handoff" in locals():
+            handoff.update(reason="error: " + type(exc).__name__, updated_at=time.time())
+            write_handoff(repo, handoff)
+        raise
+    finally:
+        server.close()
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=os.environ.get("NEURAL_LAB_ORCH_MODEL"))
-    parser.add_argument("--context-tokens", type=int, default=int(os.environ.get("NEURAL_LAB_CONTEXT_TOKENS", "0")))
+    parser.add_argument("--model", default=os.environ.get("NEURAL_LAB_ORCH_MODEL", "gpt-6.1-sol"))
     parser.add_argument("--repo", type=Path, default=Path("/repo"))
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
-    if not args.model or args.context_tokens < 1_000_000:
-        parser.error("Set a subscription-backed Codex model with a VERIFIED >=1M context and NEURAL_LAB_CONTEXT_TOKENS; current default is 500k")
+    if not args.model:
+        parser.error("Set a ChatGPT subscription-backed Codex model with a nominal 500k context window")
+    if args.poll_seconds < 1:
+        parser.error("--poll-seconds must be positive")
     notes = args.repo / ".neural-lab" / "notes"
-    notes.mkdir(parents=True, exist_ok=True)
-    while True:
-        try:
-            permitted, reason = capacity_ok(rpc_snapshot())
-        except Exception as exc:
-            permitted, reason = False, str(exc)
-        if not permitted:
-            print(json.dumps({"orchestrator": "paused", "reason": reason}), flush=True)
-        else:
-            print(json.dumps({"orchestrator": "starting", "model": args.model, "usage": reason}), flush=True)
-            code, tokens = run_session(args.model, args.context_tokens, args.repo, PROMPT)
-            print(json.dumps({"orchestrator": "session_finished", "exit_code": code,
-                              "reported_input_tokens": tokens,
-                              "live_context_rollover_enforced": False}), flush=True)
-        if args.once:
-            return 0 if permitted and code == 0 else 1
-        time.sleep(args.poll_seconds)
+    notes.mkdir(parents=True, exist_ok=True, mode=0o700)
+    stop = threading.Event()
+    prior_handlers = {name: signal.getsignal(name) for name in (signal.SIGINT, signal.SIGTERM)}
+    for name in prior_handlers:
+        signal.signal(name, lambda *_: stop.set())
+    try:
+        while not stop.is_set():
+            try:
+                permitted, reason = capacity_ok(rpc_snapshot())
+            except Exception as exc:
+                permitted, reason = False, "usage check error: " + type(exc).__name__
+            if stop.is_set():
+                break
+            if not permitted:
+                write_handoff(args.repo, {"reason": reason, "updated_at": time.time()},
+                              filename="pause-state.json")
+                print(json.dumps({"orchestrator": "paused", "reason": reason}), flush=True)
+                code = 1
+            else:
+                print(json.dumps({"orchestrator": "starting", "model": args.model, "usage": reason}), flush=True)
+                try:
+                    outcome = run_session(args.model, args.repo, PROMPT, stop=stop)
+                except Exception as exc:
+                    outcome = {"exit_code": 1, "reason": "session error: " + type(exc).__name__}
+                code = outcome["exit_code"]
+                print(json.dumps({"orchestrator": "session_finished", **outcome}), flush=True)
+            if args.once:
+                return 0 if permitted and code == 0 else 1
+            stop.wait(args.poll_seconds)
+        write_handoff(args.repo, {"reason": "shutdown requested", "updated_at": time.time()},
+                      filename="pause-state.json")
+        return 0
+    finally:
+        for name, handler in prior_handlers.items():
+            signal.signal(name, handler)
 
 
 if __name__ == "__main__":

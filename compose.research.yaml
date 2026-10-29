@@ -32,18 +32,23 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility,compute
       NEURAL_LAB_TOOLKIT_HOST_PATH: ${LAB_REPO_DIR}/neural_lab
     tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   orchestrator:
     build:
       context: .
       dockerfile: docker/codex.Dockerfile
-    user: "${LAB_UID:?Run setup}:${LAB_GID:?Run setup}"
-    entrypoint: ["python3", "-m", "neural_lab.orchestrator"]
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/research-entrypoint"]
+    command: ["python3", "-m", "neural_lab.orchestrator"]
     working_dir: /repo
     init: true
     restart: unless-stopped
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    # Writable container filesystem and sudo permit package installation.
+    # Docker namespace isolation remains the host boundary.
     pids_limit: 512
     mem_limit: 4g
     cpus: 4
@@ -52,12 +57,21 @@ services:
       - type: bind
         source: ${LAB_REPO_DIR}
         target: /repo
+        bind:
+          create_host_path: false
       - type: bind
         source: ${NEURAL_LAB_CODEX_HOME:?Set dedicated Codex auth path}
         target: /codex
+        bind:
+          create_host_path: false
     environment:
-      HOME: /tmp
+      LAB_UID: ${LAB_UID:?Run setup}
+      LAB_GID: ${LAB_GID:?Run setup}
       CODEX_HOME: /codex
       PYTHONDONTWRITEBYTECODE: "1"
-      NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-}
-      NEURAL_LAB_CONTEXT_TOKENS: ${NEURAL_LAB_CONTEXT_TOKENS:-0}
+      NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-gpt-6.1-sol}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

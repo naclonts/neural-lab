@@ -5,6 +5,11 @@ if [ "$(id -u)" -eq 0 ]; then
   echo "Run setup as your regular Linux user, without sudo." >&2
   exit 1
 fi
+command -v docker >/dev/null || { echo "Install Docker and Docker Compose first." >&2; exit 1; }
+if [ ! -S /var/run/docker.sock ]; then
+  echo "Docker socket /var/run/docker.sock is unavailable; start Docker first." >&2
+  exit 1
+fi
 umask 077
 mkdir -p experiments
 if [ ! -e .env ]; then
@@ -20,5 +25,10 @@ else
   fi
 fi
 mkdir -p .neural-lab/notes
+# Let Compose resolve .env itself; never execute shell code from that file.
+auth_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["orchestrator"]["volumes"] if v["target"] == "/codex"))')"
+mkdir -p -- "$auth_dir"
+chmod 700 -- "$auth_dir"
 docker compose config --quiet
-echo "Configuration is valid. Start with: docker compose up -d"
+docker compose -f compose.research.yaml config --quiet
+echo "Configuration is valid. Start research with: bash scripts/research.sh start"

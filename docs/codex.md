@@ -1,5 +1,10 @@
 # Use Codex with your ChatGPT subscription
 
+For the ongoing orchestrator with research subagents, live 250k context handoff,
+subscription quota pausing, and an independent GPU queue, use the
+[headless research stack](orchestrator.md). The planner described below is the
+older single-proposal path and remains available for bounded experiments.
+
 The codex planner runs the official Codex CLI in a separate, CPU-only container.
 It signs in with ChatGPT and requests a structured experiment proposal.
 The supervisor then sends the resulting code to a separate GPU worker.

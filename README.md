@@ -4,9 +4,9 @@ A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
 **Current status:** GPU sandbox, offline visualizations, a bounded experiment loop,
-and a persistent queue for deterministic training jobs. A headless research Compose
-stack is included, but its Codex orchestrator is gated on a subscription-backed
-model with a verified million-token context window; none is currently documented.
+and a persistent queue for deterministic training jobs. The headless research stack
+uses subscription-backed GPT-6.1 Sol, subagents, live context handoff above 250k
+tokens, and a 75% subscription usage pause.
 Independent evaluation, Hugging Face publishing, and unattended-operation
 hardening remain to be built.
 
@@ -103,18 +103,19 @@ python3 -m neural_lab.queue status
 python3 -m neural_lab.queue worker --once
 ```
 
-For a long-running queue worker after setup and GPU validation:
+For the research stack after ChatGPT sign-in:
 
 ```bash
-docker compose -f compose.research.yaml up -d --build worker
-docker compose -f compose.research.yaml logs -f worker
-python3 -m neural_lab.queue status
+bash scripts/codex-login.sh
+bash scripts/research.sh start
+bash scripts/research.sh status
 ```
 
-The queue worker uses no OpenAI subscription while it trains. The orchestrator
-service is currently blocked by the million-token model verification gate. Read
-[research stack setup and current limits](docs/orchestrator.md) before starting it,
-and [queue operations](docs/queue.md) for job recovery and results.
+The queue worker uses no OpenAI subscription while it trains. Startup queues three
+controls and two candidate architectures once. Read [research stack setup](docs/orchestrator.md),
+[candidate experiments](docs/experiments.md), and [queue operations](docs/queue.md)
+for account setup, job recovery, and results. Docker and NVIDIA access must be
+validated on the target laptop.
 
 ## Network visualizations
 

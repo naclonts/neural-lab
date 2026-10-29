@@ -1,6 +1,5 @@
 FROM python:3.11-slim-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends docker.io \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /repo
 COPY neural_lab /opt/neural_lab
 ENV PYTHONPATH=/opt

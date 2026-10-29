@@ -17,7 +17,7 @@ jobs:
         run: python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
       - name: Check shell scripts and Compose overlays
         run: |
-          bash -n scripts/setup.sh scripts/smoke-test.sh scripts/visualize-demo.sh scripts/codex-login.sh
+          bash -n scripts/setup.sh scripts/smoke-test.sh scripts/visualize-demo.sh scripts/codex-login.sh scripts/research.sh scripts/enqueue-starter-jobs.sh scripts/enqueue-candidate-jobs.sh docker/research-entrypoint.sh
           bash scripts/setup.sh
           docker compose -f compose.yaml -f compose.visualization.yaml config --quiet
       - name: Pull lightweight CPU isolation-test image
@@ -25,7 +25,14 @@ jobs:
       - name: Check doctor against the real local Docker daemon
         run: python -m neural_lab.manage doctor --planner demo --cpu --image python:3.11-slim --min-free-gb 1
       - name: Build isolated Codex CLI image
-        run: docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile docker
+        run: docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile .
+      - name: Check researcher permissions inside the container
+        run: |
+          docker run --rm --user 0:0 \
+            -e LAB_UID="$(id -u)" -e LAB_GID="$(id -g)" \
+            --entrypoint /usr/local/bin/research-entrypoint \
+            neural-lab-codex:0.165.0 bash -c \
+            'test "$(id -u)" -ne 0 && test "$(sudo -n id -u)" -eq 0 && test -w "$HOME"'
       - name: Check real Codex flags without authentication or inference
         run: |
           python - <<'PY'
@@ -46,6 +53,39 @@ jobs:
                   "-c", 'cli_auth_credentials_store="file"',
                   "-c", 'check_for_update_on_startup=false',
                   "-c", 'web_search="disabled"', "features", "list"], check=True)
+          PY
+      - name: Check real app-server protocol without authentication or inference
+        run: |
+          docker run --rm --network none --entrypoint python3 \
+            --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            -e NEURAL_LAB_CODEX_PROTOCOL_TESTS=1 \
+            neural-lab-codex:0.165.0 -m unittest tests.test_orchestrator.RealProtocolTests -v
+      - name: Build and run the trusted queue worker against Docker
+        run: |
+          docker build -t neural-lab-worker:ci -f docker/worker.Dockerfile .
+          cat > "$RUNNER_TEMP/queue-check.py" <<'PY'
+          import json
+          from pathlib import Path
+          Path('/output/result.json').write_text(json.dumps({
+              'metrics': {'worker_ok': 1}, 'summary': 'Containerized queue worker passed'}))
+          PY
+          python -m neural_lab.queue enqueue "$RUNNER_TEMP/queue-check.py" --hypothesis 'Verify containerized queue worker'
+          docker run --rm --network none --read-only --tmpfs /tmp \
+            --user "$(id -u):$(id -g)" --group-add "$(stat -c %g /var/run/docker.sock)" \
+            --workdir /opt -e PYTHONDONTWRITEBYTECODE=1 \
+            -e "NEURAL_LAB_TOOLKIT_HOST_PATH=$PWD/neural_lab" \
+            --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+            --mount "type=bind,src=$PWD,dst=$PWD,readonly" \
+            --mount "type=bind,src=$PWD/.neural-lab,dst=$PWD/.neural-lab" \
+            neural-lab-worker:ci --state-dir "$PWD/.neural-lab" worker --cpu --once --image python:3.11-slim
+          python - <<'PY'
+          from pathlib import Path
+          from neural_lab.queue import Queue
+          queue = Queue(Path('.neural-lab'))
+          try:
+              assert queue.status()['counts'] == {'succeeded': 1}, queue.status()
+          finally:
+              queue.close()
           PY
       - name: Test visualizations, supervisor, and Docker boundaries
         env:

@@ -1,12 +1,14 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
-from neural_lab.orchestrator import capacity_ok, main, rpc_snapshot, run_session
+from neural_lab.orchestrator import AppServer, capacity_ok, context_fraction, main, rpc_snapshot, run_session
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -23,9 +25,9 @@ class OrchestratorTests(unittest.TestCase):
         self.assertFalse(capacity_ok(snapshot)[0])
         snapshot["rateLimitsByLimitId"]["codex"]["primary"]["usedPercent"] = 10
         snapshot["ordinaryUsageAllowed"] = None
-        self.assertFalse(capacity_ok(snapshot)[0])
+        self.assertTrue(capacity_ok(snapshot)[0])
         del snapshot["ordinaryUsageAllowed"]
-        self.assertFalse(capacity_ok(snapshot)[0])
+        self.assertTrue(capacity_ok(snapshot)[0])
         snapshot["ordinaryUsageAllowed"] = True
         snapshot["rateLimitsByLimitId"]["codex"]["primary"]["usedPercent"] = True
         self.assertTrue(capacity_ok(snapshot)[0])  # other valid windows remain
@@ -57,32 +59,188 @@ sys.stdout.flush()
             snapshot = rpc_snapshot(timeout=5)
         self.assertTrue(capacity_ok(snapshot)[0])
 
-    def test_exec_enables_subagents_and_forces_chatgpt_login(self):
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = self
-                self.stdout = iter([json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100}})])
-                self.prompt = ""
+    def test_context_uses_reported_window_and_250k_handoff(self):
+        def event(tokens, window=500_000):
+            return {"params": {"tokenUsage": {"modelContextWindow": window,
+                                                "last": {"totalTokens": tokens}}}}
+        self.assertEqual(context_fraction(event(250_000)), 0.5)
+        self.assertGreater(context_fraction(event(250_001)), 0.5)
+        self.assertGreater(context_fraction(event(250_001, 475_000)), 0.5)
+        with self.assertRaises(RuntimeError):
+            context_fraction(event(100, 474_999))
+        with self.assertRaises(RuntimeError):
+            context_fraction(event(100, None))
 
-            def write(self, value):
-                self.prompt += value
+    def test_live_context_rollover_interrupts_turn(self):
+        class FakeServer:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    {"method": "item/completed", "params": {"threadId": "thread",
+                     "turnId": "turn", "item": {"type": "agentMessage", "text": "Found a useful ablation."}}},
+                    {"method": "thread/tokenUsage/updated", "params": {"threadId": "thread",
+                     "turnId": "turn", "tokenUsage": {"modelContextWindow": 500_000,
+                                                     "last": {"totalTokens": 250_001}}}},
+                    {"method": "turn/completed", "params": {"threadId": "thread",
+                     "turn": {"id": "turn", "status": "interrupted"}}},
+                ]
+
+            def request(self, method, params=None):
+                self.calls.append((method, params))
+                if method == "thread/start":
+                    return {"thread": {"id": "thread"}, "modelProvider": "openai"}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn"}}
+                return {}
+
+            def notify(self, method):
+                self.calls.append((method, None))
+
+            def send(self, method, params):
+                self.calls.append((method, params))
+                return 10
+
+            def receive(self, timeout):
+                return self.messages.pop(0)
 
             def close(self):
                 pass
 
-            def wait(self):
-                return 0
+        fake = FakeServer()
+        with tempfile.TemporaryDirectory() as root:
+            notes = Path(root) / ".neural-lab" / "notes"
+            notes.mkdir(parents=True)
+            (notes / "latest-session.json").write_text(json.dumps({"reason": "previous finding"}))
+            with patch("neural_lab.orchestrator.AppServer", return_value=fake):
+                outcome = run_session("gpt-6.1-sol", Path(root), "test prompt")
+            handoff = json.loads((notes / "latest-session.json").read_text())
+        self.assertEqual(outcome["reason"], "context exceeded 250000 tokens")
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(handoff["last_tokens"], 250001)
+        self.assertEqual(handoff["recent_agent_messages"], ["Found a useful ablation."])
+        self.assertIn("turn/interrupt", [call[0] for call in fake.calls])
+        self.assertEqual(fake.calls[2][1]["model"], "gpt-6.1-sol")
+        self.assertTrue(fake.calls[2][1]["config"]["features"]["multi_agent"])
+        self.assertIn("previous finding", fake.calls[3][1]["input"][0]["text"])
+        self.assertEqual(fake.calls[3][1]["input"][0]["text_elements"], [])
 
-        fake = FakeProcess()
-        with patch("neural_lab.orchestrator.subprocess.Popen", return_value=fake) as launch:
-            code, tokens = run_session("verified-model", 1_000_000, "/repo", "test prompt")
-        command = launch.call_args.args[0]
-        self.assertEqual((code, tokens), (0, 100))
-        self.assertIn("multi_agent", command)
-        self.assertIn("--ignore-user-config", command)
-        self.assertIn('forced_login_method="chatgpt"', command)
-        self.assertNotIn("--oss", command)
-        self.assertEqual(fake.prompt, "test prompt")
+    def test_live_subscription_gate_interrupts_turn(self):
+        class FakeServer:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    {"id": 10, "result": {"ordinaryUsageAllowed": True,
+                                          "rateLimits": {"primary": {"usedPercent": 75}}}},
+                    {"method": "turn/completed", "params": {"threadId": "thread",
+                     "turn": {"id": "turn", "status": "interrupted"}}},
+                ]
+
+            def request(self, method, params=None):
+                if method == "thread/start":
+                    return {"thread": {"id": "thread"}, "modelProvider": "openai"}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn"}}
+                return {}
+
+            def notify(self, method):
+                pass
+
+            def send(self, method, params):
+                self.calls.append(method)
+                return 10
+
+            def receive(self, timeout):
+                return self.messages.pop(0)
+
+            def close(self):
+                pass
+
+        fake = FakeServer()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.AppServer", return_value=fake):
+                outcome = run_session("gpt-6.1-sol", Path(root), "test", usage_poll_seconds=0)
+        self.assertIn("75%", outcome["reason"])
+        self.assertEqual(fake.calls, ["account/rateLimits/read", "turn/interrupt"])
+
+    def test_poll_timeout_interrupts_even_without_new_message(self):
+        class FakeServer:
+            def __init__(self):
+                self.calls = []
+                self.waited = False
+
+            def request(self, method, params=None):
+                if method == "thread/start":
+                    return {"thread": {"id": "thread"}, "modelProvider": "openai"}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn"}}
+                return {}
+
+            def notify(self, method):
+                pass
+
+            def send(self, method, params):
+                self.calls.append(method)
+                return 10 if method == "account/rateLimits/read" else 11
+
+            def receive(self, timeout):
+                if not self.waited:
+                    self.waited = True
+                    time.sleep(0.02)
+                    return None
+                return {"method": "turn/completed", "params": {"threadId": "thread",
+                        "turn": {"id": "turn", "status": "interrupted"}}}
+
+            def close(self):
+                pass
+
+        fake = FakeServer()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.AppServer", return_value=fake):
+                outcome = run_session("gpt-6.1-sol", Path(root), "test", usage_poll_seconds=0,
+                                      usage_timeout_seconds=0.01)
+            pause = json.loads((Path(root) / ".neural-lab/notes/latest-session.json").read_text())
+        self.assertEqual(fake.calls, ["account/rateLimits/read", "turn/interrupt"])
+        self.assertEqual(outcome["reason"], "subscription usage check timed out")
+        self.assertEqual(pause["reason"], "subscription usage check timed out")
+
+    def test_sparse_usage_update_refetches_and_interrupts(self):
+        class FakeServer:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    {"method": "account/rateLimits/updated", "params": {
+                        "rateLimits": {"credits": {"hasCredits": False, "unlimited": False}}}},
+                    {"id": 10, "result": {"rateLimits": {"primary": {"usedPercent": 75}}}},
+                    {"method": "turn/completed", "params": {"threadId": "thread",
+                        "turn": {"id": "turn", "status": "interrupted"}}},
+                ]
+
+            def request(self, method, params=None):
+                if method == "thread/start":
+                    return {"thread": {"id": "thread"}, "modelProvider": "openai"}
+                if method == "turn/start":
+                    return {"turn": {"id": "turn"}}
+                return {}
+
+            def notify(self, method):
+                pass
+
+            def send(self, method, params):
+                self.calls.append(method)
+                return 10
+
+            def receive(self, timeout):
+                return self.messages.pop(0)
+
+            def close(self):
+                pass
+
+        fake = FakeServer()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.AppServer", return_value=fake):
+                result = run_session("gpt-6.1-sol", Path(root), "test")
+        self.assertIn("75%", result["reason"])
+        self.assertEqual(fake.calls, ["account/rateLimits/read", "turn/interrupt"])
 
     def test_paused_once_does_not_start_codex_session(self):
         with tempfile.TemporaryDirectory() as root:
@@ -91,11 +249,36 @@ sys.stdout.flush()
                 "rateLimits": {"primary": {"usedPercent": 75}},
             }):
                 with patch("neural_lab.orchestrator.run_session") as run:
-                    result = main(["--model", "verified-model", "--context-tokens", "1000000",
-                                   "--repo", root, "--once"])
+                    result = main(["--model", "verified-model", "--repo", root, "--once"])
             self.assertEqual(result, 1)
             run.assert_not_called()
             self.assertTrue((Path(root) / ".neural-lab" / "notes").is_dir())
+
+
+@unittest.skipUnless(os.environ.get("NEURAL_LAB_CODEX_PROTOCOL_TESTS") == "1", "Real Codex CLI protocol opt-in")
+class RealProtocolTests(unittest.TestCase):
+    def test_authless_handshake_and_thread_creation_without_inference(self):
+        with tempfile.TemporaryDirectory(prefix="neural-lab-protocol-") as home:
+            with patch.dict(os.environ, {"CODEX_HOME": home}):
+                server = AppServer()
+                try:
+                    server.request("initialize", {
+                        "clientInfo": {"name": "neural-lab-protocol-test", "version": "1"},
+                        "capabilities": {"experimentalApi": True},
+                    })
+                    server.notify("initialized")
+                    self.assertIsNone(server.request("account/read", {"refreshToken": False}).get("account"))
+                    thread = server.request("thread/start", {
+                        "cwd": str(Path.cwd()), "model": "gpt-6.1-sol", "modelProvider": "openai",
+                        "approvalPolicy": "never", "sandbox": "danger-full-access", "ephemeral": True,
+                        "config": {"forced_login_method": "chatgpt", "model_provider": "openai",
+                                   "features": {"multi_agent": True}, "web_search": "live"},
+                    })
+                    self.assertTrue(thread["thread"]["id"])
+                    self.assertEqual(thread["modelProvider"], "openai")
+                    # No turn/start: this check never invokes a model or uses account capacity.
+                finally:
+                    server.close()
 
 
 if __name__ == "__main__":

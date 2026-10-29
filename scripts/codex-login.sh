@@ -20,7 +20,7 @@ chmod 700 -- "$auth_dir"
 case "$auth_dir" in
   *","*) echo "Login directory cannot contain commas." >&2; exit 2 ;;
 esac
-docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile docker
+docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile .
 docker run --rm -i \
   --user "$(id -u):$(id -g)" \
   --read-only --cap-drop ALL --security-opt no-new-privileges:true \
