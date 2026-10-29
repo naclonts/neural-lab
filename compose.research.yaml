@@ -1,0 +1,63 @@
+name: neural-lab-research
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    user: "${LAB_UID:?Run setup}:${LAB_GID:?Run setup}"
+    group_add: ["${DOCKER_GID:?Run setup}"]
+    working_dir: /opt
+    command: ["--state-dir", "${LAB_REPO_DIR}/.neural-lab", "worker"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    network_mode: none
+    gpus: all
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: ${LAB_REPO_DIR}
+        target: ${LAB_REPO_DIR}
+        read_only: true
+      - type: bind
+        source: ${LAB_REPO_DIR}/.neural-lab
+        target: ${LAB_REPO_DIR}/.neural-lab
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      NVIDIA_DRIVER_CAPABILITIES: utility,compute
+      NEURAL_LAB_TOOLKIT_HOST_PATH: ${LAB_REPO_DIR}/neural_lab
+    tmpfs: [/tmp]
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/codex.Dockerfile
+    user: "${LAB_UID:?Run setup}:${LAB_GID:?Run setup}"
+    entrypoint: ["python3", "-m", "neural_lab.orchestrator"]
+    working_dir: /repo
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 4
+    tmpfs: [/tmp:rw,nosuid,nodev,size=1g,mode=1777]
+    volumes:
+      - type: bind
+        source: ${LAB_REPO_DIR}
+        target: /repo
+      - type: bind
+        source: ${NEURAL_LAB_CODEX_HOME:?Set dedicated Codex auth path}
+        target: /codex
+    environment:
+      HOME: /tmp
+      CODEX_HOME: /codex
+      PYTHONDONTWRITEBYTECODE: "1"
+      NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-}
+      NEURAL_LAB_CONTEXT_TOKENS: ${NEURAL_LAB_CONTEXT_TOKENS:-0}

@@ -3,10 +3,12 @@
 A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
-**Current status:** GPU sandbox, offline visualizations, and a bounded persistent
-experiment loop with demo, Codex CLI, and API-backed planners. Independent evaluation,
-Hugging Face publishing, and unattended-operation hardening remain to be built.
-The Compose service stays idle; the supervisor launches disposable workers.
+**Current status:** GPU sandbox, offline visualizations, a bounded experiment loop,
+and a persistent queue for deterministic training jobs. A headless research Compose
+stack is included, but its Codex orchestrator is gated on a subscription-backed
+model with a verified million-token context window; none is currently documented.
+Independent evaluation, Hugging Face publishing, and unattended-operation
+hardening remain to be built.
 
 ## Requirements
 
@@ -90,6 +92,29 @@ available with `--planner api --model YOUR_MODEL_NAME`.
 
 See [agent loop usage, budgets, and recovery](docs/agent-loop.md). This is a
 development loop; network egress and disk quotas still need hardening.
+
+## Persistent research queue
+
+Queue the three reproducible starter comparisons, then run or inspect GPU jobs:
+
+```bash
+bash scripts/enqueue-starter-jobs.sh
+python3 -m neural_lab.queue status
+python3 -m neural_lab.queue worker --once
+```
+
+For a long-running queue worker after setup and GPU validation:
+
+```bash
+docker compose -f compose.research.yaml up -d --build worker
+docker compose -f compose.research.yaml logs -f worker
+python3 -m neural_lab.queue status
+```
+
+The queue worker uses no OpenAI subscription while it trains. The orchestrator
+service is currently blocked by the million-token model verification gate. Read
+[research stack setup and current limits](docs/orchestrator.md) before starting it,
+and [queue operations](docs/queue.md) for job recovery and results.
 
 ## Network visualizations
 

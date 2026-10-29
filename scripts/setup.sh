@@ -8,9 +8,17 @@ fi
 umask 077
 mkdir -p experiments
 if [ ! -e .env ]; then
-  printf 'LAB_UID=%s\nLAB_GID=%s\n' "$(id -u)" "$(id -g)" > .env
+  printf 'LAB_UID=%s\nLAB_GID=%s\nLAB_REPO_DIR=%s\nDOCKER_GID=%s\nNEURAL_LAB_CODEX_HOME=%s\n' \
+    "$(id -u)" "$(id -g)" "$PWD" "$(stat -c %g /var/run/docker.sock)" \
+    "${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}" > .env
 else
   echo "Keeping existing .env; check LAB_UID and LAB_GID match your regular user."
+  if ! grep -q '^LAB_REPO_DIR=' .env; then printf 'LAB_REPO_DIR=%s\n' "$PWD" >> .env; fi
+  if ! grep -q '^DOCKER_GID=' .env; then printf 'DOCKER_GID=%s\n' "$(stat -c %g /var/run/docker.sock)" >> .env; fi
+  if ! grep -q '^NEURAL_LAB_CODEX_HOME=' .env; then
+    printf 'NEURAL_LAB_CODEX_HOME=%s\n' "${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}" >> .env
+  fi
 fi
+mkdir -p .neural-lab/notes
 docker compose config --quiet
 echo "Configuration is valid. Start with: docker compose up -d"
