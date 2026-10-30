@@ -37,3 +37,31 @@ superiority. The synthetic task is small and uses one fixed teacher per seed.
 Results need an independent evaluator, broader datasets, more seeds, and runtime
 matching before drawing stronger conclusions. GPU results can still vary across
 hardware or library versions despite deterministic settings.
+
+## Centered product screening experiment
+
+`jobs/candidates/centered_product_mixer.py` compares the same dense control
+with rank-16 centered projection products and a centered additive ablation.
+Each projection subtracts its own per-example mean over rank channels. The
+product is projected back to width 48 before GELU and residual addition.
+Product and additive arms share every initial tensor; all arms share initial
+input and output tensors. Parameter totals are 5,716 (dense) and 5,780
+(product/additive). It retains seeds 1101–1103 and the original 55-update
+protocol for exploratory continuity, and records task fingerprints, paired
+accuracy/loss differences, and software/device settings.
+
+The additive branch can collapse to a low-rank affine map before GELU.
+Multiplication changes both polynomial degree and activation scale; dividing
+the additive sum by sqrt(2) does not guarantee matched activation variance.
+This is an operator ablation, with no isolated claim about centering,
+parameter efficiency, or broad architectural novelty. Low-rank bilinear
+products have established prior art, including
+[Kim et al.](https://arxiv.org/abs/1610.04325). Existing inspected seeds are
+development screening data; confirmation requires fresh seeds and tasks.
+Timing has fixed arm order and supports no speed claim.
+
+Queue the self-contained script without running training locally:
+
+```bash
+python3 -m neural_lab.queue enqueue jobs/candidates/centered_product_mixer.py --hypothesis "Centered low-rank product residuals improve held-out loss over dense residual and same-parameter centered additive controls under a fixed three-seed cross-feature protocol."
+```

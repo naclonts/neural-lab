@@ -33,6 +33,37 @@ This task's managed shell may not expose the laptop's Docker socket or NVIDIA
 devices. A passing static Compose check does not establish that GPU training is
 running; the startup GPU check must pass on the laptop.
 
+### NVIDIA CDI startup failures
+
+If Docker reports `Error updating ldcache: execveat: no such file or directory`
+before Python starts, test NVIDIA's explicit runtime path:
+
+```bash
+docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=0 \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime \
+  python -c 'import torch; print(torch.ones(2, device="cuda"))'
+```
+
+On the validated Debian 6.1 / Toolkit 1.20.1 / Docker 29 host, the CDI library-cache
+hook fails but the explicit NVIDIA runtime works with `mode = "legacy"` in
+`/etc/nvidia-container-runtime/config.toml`. Back up that host configuration before
+changing it with `sudo nvidia-ctk config --set nvidia-container-runtime.mode=legacy
+--in-place`. This setting affects other users of the NVIDIA runtime too. Restore
+the backup to undo it. See [NVIDIA runtime configuration](https://github.com/NVIDIA/nvidia-container-toolkit/blob/v1.20.1/cmd/nvidia-container-runtime/README.md).
+
+After the explicit-runtime CUDA test passes, set `NEURAL_LAB_GPU_BACKEND=nvidia`
+in the private `.env`. Startup passes it to both the host GPU probe and the queue
+worker. For direct Python commands, set it in the command environment:
+
+```bash
+NEURAL_LAB_GPU_BACKEND=nvidia python3 -m neural_lab.manage doctor --planner demo --gpu-test
+```
+
+The default `docker` backend uses `--gpus device=0`; the `nvidia` backend uses
+`--runtime=nvidia` and selects the GPU with `NVIDIA_VISIBLE_DEVICES`. Both retain
+the same user, read-only filesystem, capability, mount, and resource limits.
+
 ## Monitor and control
 
 ```bash

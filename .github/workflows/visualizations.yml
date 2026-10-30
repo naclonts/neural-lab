@@ -28,10 +28,8 @@ jobs:
         run: docker build -t neural-lab-codex:0.165.0 -f docker/codex.Dockerfile .
       - name: Check researcher permissions inside the container
         run: |
-          docker run --rm --user 0:0 \
-            -e LAB_UID="$(id -u)" -e LAB_GID="$(id -g)" \
-            --entrypoint /usr/local/bin/research-entrypoint \
-            neural-lab-codex:0.165.0 bash -c \
+          docker compose -f compose.research.yaml run --rm --no-deps --pull never \
+            orchestrator bash -c \
             'test "$(id -u)" -ne 0 && test "$(sudo -n id -u)" -eq 0 && test -w "$HOME"'
       - name: Check real Codex flags without authentication or inference
         run: |

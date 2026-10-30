@@ -53,8 +53,11 @@ def read_result(directory):
 
 class DockerRunner:
     def __init__(self, owner, *, image="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
-                 gpu="0", timeout=300, toolkit=None):
+                 gpu="0", timeout=300, toolkit=None, gpu_backend=None):
         self.owner, self.image, self.gpu, self.timeout = owner, image, gpu, timeout
+        self.gpu_backend = gpu_backend or os.environ.get("NEURAL_LAB_GPU_BACKEND", "docker")
+        if self.gpu_backend not in ("docker", "nvidia"):
+            raise ValueError("GPU backend must be docker or nvidia")
         self.toolkit = Path(toolkit or Path(__file__).parent).resolve()
         if gpu is not None and not str(gpu).isdigit():
             raise ValueError("GPU must be a numeric device index")
@@ -95,7 +98,11 @@ class DockerRunner:
             "--env", "HF_HUB_DISABLE_IMPLICIT_TOKEN=1",
         ]
         if self.gpu is not None:
-            args.extend(["--gpus", "device=" + str(self.gpu)])
+            if self.gpu_backend == "nvidia":
+                args.extend(["--runtime", "nvidia", "--env", "NVIDIA_VISIBLE_DEVICES=" + str(self.gpu),
+                             "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility"])
+            else:
+                args.extend(["--gpus", "device=" + str(self.gpu)])
         return args + ["--entrypoint", "python", self.image, "-B", "/input/train.py"]
 
     def run(self, run_id, input_dir, output_dir, stop):

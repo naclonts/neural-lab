@@ -14,6 +14,9 @@ case "$operation" in
 esac
 umask 077
 auth_dir="${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}"
+if [ -f .env ]; then
+  auth_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["orchestrator"]["volumes"] if v["target"] == "/codex"))')"
+fi
 mkdir -p -- "$auth_dir"
 auth_dir="$(cd -- "$auth_dir" && pwd -P)"
 chmod 700 -- "$auth_dir"

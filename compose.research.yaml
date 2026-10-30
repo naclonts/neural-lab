@@ -14,7 +14,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     network_mode: none
-    gpus: all
+    # This controller needs NVML for preflight; training runs in child containers.
+    runtime: nvidia
     volumes:
       - type: bind
         source: /var/run/docker.sock
@@ -30,6 +31,8 @@ services:
       HOME: /tmp
       PYTHONDONTWRITEBYTECODE: "1"
       NVIDIA_DRIVER_CAPABILITIES: utility,compute
+      NVIDIA_VISIBLE_DEVICES: "0"
+      NEURAL_LAB_GPU_BACKEND: ${NEURAL_LAB_GPU_BACKEND:-docker}
       NEURAL_LAB_TOOLKIT_HOST_PATH: ${LAB_REPO_DIR}/neural_lab
     tmpfs: [/tmp]
     logging:
@@ -38,6 +41,7 @@ services:
         max-size: "10m"
         max-file: "3"
   orchestrator:
+    image: neural-lab-codex:0.165.0
     build:
       context: .
       dockerfile: docker/codex.Dockerfile
@@ -52,7 +56,7 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 4
-    tmpfs: [/tmp:rw,nosuid,nodev,size=1g,mode=1777]
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=1g,mode=1777"]
     volumes:
       - type: bind
         source: ${LAB_REPO_DIR}

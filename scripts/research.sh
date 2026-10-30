@@ -7,6 +7,9 @@ operation="${1:-status}"
 case "$operation" in
   start)
     bash scripts/setup.sh
+    # Resolve Compose's .env without executing it as shell code.
+    export NEURAL_LAB_GPU_BACKEND
+    NEURAL_LAB_GPU_BACKEND="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["worker"]["environment"]["NEURAL_LAB_GPU_BACKEND"])')"
     # Pull before enqueue/start: a missing training image must not consume jobs.
     docker pull pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
     python3 -m neural_lab.manage doctor --planner demo --gpu-test

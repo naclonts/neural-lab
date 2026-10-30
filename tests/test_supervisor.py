@@ -114,6 +114,21 @@ class SupervisorTests(unittest.TestCase):
             self.assertNotIn(forbidden, joined)
         self.assertNotIn("--gpus", DockerRunner("testowner", gpu=None).command("test", "/tmp/in", "/tmp/out"))
 
+    def test_nvidia_backend_selects_only_requested_gpu_and_preserves_isolation(self):
+        with patch.dict(os.environ, {"NEURAL_LAB_GPU_BACKEND": "nvidia"}):
+            command = DockerRunner("testowner", gpu="2").command("test", "/tmp/in", "/tmp/out")
+            cpu = DockerRunner("testowner", gpu=None).command("cpu", "/tmp/in", "/tmp/out")
+        joined = " ".join(command)
+        for required in ("--runtime nvidia", "NVIDIA_VISIBLE_DEVICES=2",
+                         "NVIDIA_DRIVER_CAPABILITIES=compute,utility", "--read-only",
+                         "--cap-drop ALL", "no-new-privileges:true"):
+            self.assertIn(required, joined)
+        self.assertNotIn("--gpus", command)
+        self.assertNotIn("--runtime", cpu)
+        self.assertNotIn("NVIDIA_VISIBLE_DEVICES", " ".join(cpu))
+        with self.assertRaises(ValueError):
+            DockerRunner("testowner", gpu_backend="unsupported")
+
     def test_timeout_removes_container(self):
         runner = DockerRunner("testowner", gpu=None, timeout=0)
         with patch.object(runner, "_docker", return_value="container") as docker:
