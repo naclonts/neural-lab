@@ -19,7 +19,7 @@ To queue another reviewed script:
 
 ```bash
 python3 -m neural_lab.queue enqueue path/to/train.py \
-  --hypothesis 'A specific testable claim' --timeout-seconds 300
+  --hypothesis 'A specific testable claim' --timeout-seconds 1800
 ```
 
 Scripts must be UTF-8 regular files at most 64 KiB. They must write
@@ -29,6 +29,12 @@ Input files are read-only in the container. The queue records completed outputs 
 disk readiness before taking a job. If the host is not ready, queued work remains
 queued. A crash interrupts the running job but leaves later jobs queued. The next
 worker start removes stale containers for this queue and marks that job interrupted.
+
+New jobs default to a 1,800-second (30-minute) timeout, including container
+startup, data downloads, training, evaluation, and artifact saving. Existing jobs
+keep their recorded timeouts. Use a shorter explicit timeout for smoke tests.
+The research stack builds the Hugging Face-enabled training image; set
+`NEURAL_LAB_WORKER_IMAGE` in private `.env` to select a different trusted image.
 
 Use `--cpu` for CPU-only development. The worker defaults to the GPU. Its Docker
 isolation and host limitations are the same as the existing supervisor, including

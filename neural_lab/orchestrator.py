@@ -35,6 +35,28 @@ experiment. Keep notes durable throughout the session: the controller hands off
 above 60% of the server-reported context window. Finish this session with a concise
 handoff note. A fresh session will read the notes and continue later.
 
+The operator wants substantially more training per scientist session. Tiny
+synthetic CPU screens are preliminary diagnostics, not the main research output.
+Prioritize substantive CUDA campaigns on the RTX 2070 (8 GiB VRAM): aim for
+roughly 10–20 minutes of useful training per queued job, with a 1,800-second
+timeout covering downloads, training, evaluation, and artifact writes. Increase
+dataset size, model capacity, minibatch work, and optimization budget where the
+hypothesis warrants it; never add sleeps, redundant fits, or arbitrary work just
+to meet a runtime target. Use public real-world Hugging Face benchmarks when
+appropriate, and keep exploratory synthetic diagnostics clearly labeled.
+Substantive jobs must assert torch.cuda.is_available(), move models and training
+tensors to CUDA, and report device, training_seconds, and peak allocated GPU
+memory. Do not silently fall back to CPU or freeze a CPU-only protocol for the
+next main campaign. CPU data preparation and small correctness checks are fine.
+Freeze fair controls, seed replicates, splits, evaluation, and compute budgets
+before training. Queue 2–4 justified complementary jobs per campaign when useful,
+so the independent worker has work during subscription pauses. Explicitly pass
+--timeout-seconds 1800. Keep one GPU job at a time and all existing boundaries.
+Use bounded subagent briefs and reuse their durable findings across a campaign;
+avoid repeating literature reviews while a runnable, reviewed experiment waits.
+The prior relational-geometry proposal is still unqueued: revise its tiny CPU
+training budget and complete review under this new policy before enqueuing it.
+
 Every new experiment must save reproducible data provenance and model weights,
 not just scalar metrics. Use neural_lab.artifacts.ArtifactWriter('/output') for
 datasets and an artifacts.json manifest. For synthetic tasks save the exact split

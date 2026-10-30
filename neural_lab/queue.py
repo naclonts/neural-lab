@@ -21,6 +21,7 @@ from neural_lab.runner import CleanupError, DockerRunner
 
 MAX_SCRIPT_BYTES = 65536
 DEFAULT_STATE = Path(".neural-lab")
+DEFAULT_JOB_TIMEOUT = 1800
 
 
 def read_script(path: Path) -> bytes:
@@ -56,7 +57,7 @@ class Queue:
         self.db.commit()
         self.owner = self.db.execute("SELECT value FROM queue_meta WHERE key='owner'").fetchone()[0]
 
-    def enqueue(self, script: Path, hypothesis: str, timeout_seconds: int = 300) -> str:
+    def enqueue(self, script: Path, hypothesis: str, timeout_seconds: int = DEFAULT_JOB_TIMEOUT) -> str:
         if not 1 <= len(hypothesis) <= 2000:
             raise ValueError("Hypothesis must contain 1–2000 characters")
         if not 1 <= timeout_seconds <= 86400:
@@ -150,13 +151,13 @@ def main(argv=None):
     enqueue = commands.add_parser("enqueue")
     enqueue.add_argument("script", type=Path)
     enqueue.add_argument("--hypothesis", required=True)
-    enqueue.add_argument("--timeout-seconds", type=int, default=300)
+    enqueue.add_argument("--timeout-seconds", type=int, default=DEFAULT_JOB_TIMEOUT)
     status = commands.add_parser("status")
     status.add_argument("--limit", type=int, default=20)
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--idle-seconds", type=float, default=30)
-    worker.add_argument("--image", default="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime")
+    worker.add_argument("--image", default=os.environ.get("NEURAL_LAB_WORKER_IMAGE", "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime"))
     worker.add_argument("--gpu", default="0")
     worker.add_argument("--cpu", action="store_true")
     args = parser.parse_args(argv)

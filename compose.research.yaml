@@ -33,6 +33,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility,compute
       NVIDIA_VISIBLE_DEVICES: "0"
       NEURAL_LAB_GPU_BACKEND: ${NEURAL_LAB_GPU_BACKEND:-docker}
+      NEURAL_LAB_WORKER_IMAGE: ${NEURAL_LAB_WORKER_IMAGE:-neural-lab-training:torch2.8-hf}
       NEURAL_LAB_TOOLKIT_HOST_PATH: ${LAB_REPO_DIR}/neural_lab
     tmpfs: [/tmp]
     logging:

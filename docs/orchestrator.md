@@ -66,6 +66,16 @@ the same user, read-only filesystem, capability, mount, and resource limits.
 
 ## Monitor and control
 
+The scientist now targets substantive CUDA training campaigns rather than a
+sequence of tiny CPU screens. Typical useful training should take about 10–20
+minutes per job within a 30-minute timeout. Runtime is a planning target, not an
+instruction to pad experiments. The controller requests 2–4 justified, reviewed
+jobs per campaign when appropriate, larger data/model/training budgets, fair
+controls, and recorded CUDA placement, training time, and peak GPU memory.
+Public Hugging Face benchmarks are available in the training image. The pending
+relational proposal must be revised and reviewed under this policy before use.
+Existing completed experiments and their frozen protocols are preserved.
+
 ```bash
 bash scripts/research.sh status
 bash scripts/research.sh logs

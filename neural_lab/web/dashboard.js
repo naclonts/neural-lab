@@ -88,6 +88,39 @@ function renderJobs() {
     }
     if (result.summary) body.append(el('h3', '', 'REPORTED RESULT'), el('p', 'result-summary', result.summary));
     if (job.error) body.append(el('p', 'alert', job.error));
+    const artifacts = job.artifacts || {datasets: [], checkpoints: [], reports: []};
+    for (const [category, heading, empty] of [
+      ['datasets', 'DATASETS & PROVENANCE', 'No dataset snapshot was saved by this historical job.'],
+      ['checkpoints', 'SAVED WEIGHTS', 'No weights were saved by this historical job.'],
+      ['reports', 'RESULT FILES & TRAINING SOURCE', 'No downloadable reports.'],
+    ]) {
+      body.append(el('h3', '', heading));
+      const entries = artifacts[category] || [];
+      if (!entries.length) { body.append(el('p', 'muted', empty)); continue; }
+      const list = el('div', 'artifact-list');
+      for (const artifact of entries) {
+        const row = el('div', 'artifact');
+        const link = el('a', '', artifact.label || artifact.path);
+        link.href = artifact.url;
+        row.append(link, el('small', '', `${number(Math.ceil(artifact.bytes / 1024))} KiB${artifact.sha256 ? ` · SHA-256 ${artifact.sha256.slice(0, 12)}…` : ''}`));
+        if (artifact.selection) row.append(el('small', '', `${artifact.selection.scope || artifact.selection.metric} · step ${number(artifact.selection.step)} · loss ${number(artifact.selection.value)}`));
+        const source = artifact.source;
+        if (source && typeof source === 'object') {
+          row.append(el('small', '', source.kind === 'huggingface' ? `${source.repo_id} · split ${source.split} · revision ${source.revision}` : JSON.stringify(source)));
+          if (typeof source.url === 'string' && source.url.startsWith('https://huggingface.co/datasets/')) {
+            const origin = el('a', 'origin-link', 'View source on Hugging Face ↗');
+            origin.href = source.url; origin.target = '_blank'; origin.rel = 'noopener noreferrer';
+            row.append(origin);
+          }
+        }
+        list.append(row);
+      }
+      if (category === 'checkpoints' && entries.length > 4) {
+        const disclosure = el('details', 'artifact-disclosure');
+        disclosure.append(el('summary', '', `${entries.length} saved checkpoints · expand to download`), list);
+        body.append(disclosure);
+      } else body.append(list);
+    }
     const entries = Object.entries(metrics);
     if (entries.length) {
       body.append(el('h3', '', 'ALL METRICS'));
@@ -122,9 +155,11 @@ function renderScientist(scientist) {
     reason === 'running' ? (seconds > 180 ? 'Checkpoint is quiet. This is the last reported state, not a live process health check.' : 'Researching, designing, or implementing. GPU work is queued separately.') :
     'State comes from the scientist’s last saved checkpoint.');
   const tokens = scientist.last_tokens;
-  text('context-label', finite(tokens) ? `${number(tokens)} / 250,000` : 'No telemetry yet');
-  $('context-meter').value = finite(tokens) ? Math.min(250000, tokens) : 0;
-  text('context-window', `Handoff above 250,000 tokens${finite(scientist.model_context_window) ? ` · effective window ${number(scientist.model_context_window)}` : ''}`);
+  const windowSize = scientist.model_context_window;
+  text('context-label', finite(tokens) && finite(windowSize) ? `${number(tokens)} / ${number(windowSize)} (${(tokens / windowSize * 100).toFixed(1)}%)` : 'No telemetry yet');
+  $('context-meter').max = finite(windowSize) && windowSize > 0 ? windowSize : 100;
+  $('context-meter').value = finite(tokens) ? tokens : 0;
+  text('context-window', `Fresh session above 60% of the reported window${finite(windowSize) ? ` · ${number(windowSize * 0.6)} tokens` : ''}`);
   const messages = Array.isArray(scientist.recent_agent_messages) ? scientist.recent_agent_messages.filter(x => typeof x === 'string') : [];
   $('messages').replaceChildren(...(messages.length ? messages.map(message => el('p', 'message', message)) : [el('p', 'muted', 'No scientist messages saved yet.')]));
 }
