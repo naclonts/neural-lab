@@ -117,6 +117,16 @@ controls and two candidate architectures once. Read [research stack setup](docs/
 for account setup, job recovery, and results. Docker and NVIDIA access must be
 validated on the target laptop.
 
+## Live experiment dashboard
+
+```bash
+bash scripts/dashboard.sh start
+```
+
+Open **http://127.0.0.1:8766** for experiment results, scientist updates, research
+notes, and live GPU telemetry. The read-only interface works on phone screens.
+See [dashboard operations and private Tailscale access](docs/dashboard.md).
+
 ## Network visualizations
 
 Generate interactive graphs, SVG layer diagrams, and JSON/DOT exports for an MLP,

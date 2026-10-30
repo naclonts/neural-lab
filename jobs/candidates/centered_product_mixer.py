@@ -18,6 +18,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from neural_lab.artifacts import ArtifactWriter, BestCheckpoint
+
 SEEDS = (1101, 1102, 1103)
 WIDTH, RANK, BLOCKS = 48, 16, 2
 EPOCHS, INPUT_DIM, CLASSES = 55, 16, 4
@@ -98,28 +100,34 @@ def paired_models(seed):
     return models
 
 
-def fit(model, data, device):
+def fit(model, data, device, *, artifacts, arm, seed, dataset_path):
     train_x, train_y, val_x, val_y = data
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.006, weight_decay=0.001)
+    best = BestCheckpoint()
     if device.type == "cuda":
         torch.cuda.synchronize()
     started = time.monotonic()
-    for _ in range(EPOCHS):
+    for step in range(EPOCHS):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         loss = F.cross_entropy(model(train_x), train_y)
+        best.observe(model, loss.item(), step)
         loss.backward()
         optimizer.step()
     model.eval()
     with torch.no_grad():
+        best.observe(model, F.cross_entropy(model(train_x), train_y).item(), EPOCHS)
         logits = model(val_x)
         accuracy = (logits.argmax(dim=1) == val_y).float().mean().item()
         heldout_loss = F.cross_entropy(logits, val_y).item()
     if device.type == "cuda":
         torch.cuda.synchronize()
-    return {"accuracy": accuracy, "heldout_loss": heldout_loss,
-            "training_seconds": time.monotonic() - started}
+    elapsed = time.monotonic() - started
+    best.save(artifacts, f"{arm}-seed-{seed}-best", arm=arm, seed=seed,
+              config={"script": "centered_product_mixer.py", "width": WIDTH, "rank": RANK,
+                      "blocks": BLOCKS, "epochs": EPOCHS}, datasets=[dataset_path])
+    return {"accuracy": accuracy, "heldout_loss": heldout_loss, "training_seconds": elapsed}
 
 
 def main():
@@ -130,6 +138,8 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    output = Path("/output")
+    artifacts = ArtifactWriter(output)
     records, counts = [], None
     for seed in SEEDS:
         models = paired_models(seed)
@@ -140,13 +150,18 @@ def main():
         assert WIDTH * WIDTH + WIDTH == 2352
         assert 3 * WIDTH * RANK + 2 * RANK + WIDTH == 2384
         cpu_data = task(seed)
+        dataset = artifacts.save_dataset(f"cross-feature-seed-{seed}",
+            dict(zip(("train_x", "train_y", "heldout_x", "heldout_y"), cpu_data)),
+            provenance={"kind": "generated", "generator": "centered_product_mixer.py:task", "seed": seed,
+                        "description": "Gaussian 16-feature classification with linear, multiplicative, and sinusoidal teacher; four classes",
+                        "split": "1536 training rows, 512 held-out rows", "downloads": False})
         fingerprints = {name: hashlib.sha256(tensor.contiguous().numpy().tobytes()).hexdigest()
                         for name, tensor in zip(("train_x", "train_y", "heldout_x", "heldout_y"), cpu_data)}
         data = tuple(tensor.to(device) for tensor in cpu_data)
         row = {"seed": seed, "task_tensor_sha256": fingerprints}
         for arm in ARMS:
             torch.manual_seed(seed)
-            row[arm] = fit(models[arm], data, device)
+            row[arm] = fit(models[arm], data, device, artifacts=artifacts, arm=arm, seed=seed, dataset_path=dataset["path"])
         row["candidate_minus_baseline_accuracy"] = row["candidate"]["accuracy"] - row["baseline"]["accuracy"]
         row["candidate_minus_additive_accuracy"] = row["candidate"]["accuracy"] - row["additive"]["accuracy"]
         row["candidate_minus_baseline_loss"] = row["candidate"]["heldout_loss"] - row["baseline"]["heldout_loss"]
@@ -186,8 +201,7 @@ def main():
         "records": records,
         "limitations": "Single synthetic task family, three seeds, fixed arm timing order; deterministic settings do not imply identical results across hardware or library versions.",
     }
-    output = Path("/output")
-    output.mkdir(parents=True, exist_ok=True)
+    result["summary"] += " Data and best-training-loss weights: artifacts.json; reported metrics remain final-update metrics."
     (output / "details.json").write_text(json.dumps(details, allow_nan=False, indent=2))
     (output / "result.json").write_text(json.dumps(result, allow_nan=False, indent=2))
     print(json.dumps(result, allow_nan=False))

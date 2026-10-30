@@ -17,9 +17,12 @@ jobs:
         run: python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
       - name: Check shell scripts and Compose overlays
         run: |
-          bash -n scripts/setup.sh scripts/smoke-test.sh scripts/visualize-demo.sh scripts/codex-login.sh scripts/research.sh scripts/enqueue-starter-jobs.sh scripts/enqueue-candidate-jobs.sh docker/research-entrypoint.sh
+          bash -n scripts/setup.sh scripts/smoke-test.sh scripts/visualize-demo.sh scripts/codex-login.sh scripts/research.sh scripts/dashboard.sh scripts/enqueue-starter-jobs.sh scripts/enqueue-candidate-jobs.sh docker/research-entrypoint.sh
           bash scripts/setup.sh
           docker compose -f compose.yaml -f compose.visualization.yaml config --quiet
+          docker compose -f compose.dashboard.yaml config --quiet
+      - name: Build read-only dashboard image
+        run: docker build -t neural-lab-dashboard:ci -f docker/dashboard.Dockerfile .
       - name: Pull lightweight CPU isolation-test image
         run: docker pull python:3.11-slim
       - name: Check doctor against the real local Docker daemon

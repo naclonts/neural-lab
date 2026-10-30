@@ -11,6 +11,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from neural_lab.artifacts import ArtifactWriter, BestCheckpoint
+
 
 SEEDS = (1101, 1102, 1103)
 WIDTH = 48
@@ -70,27 +72,34 @@ class Network(nn.Module):
         return self.output(hidden)
 
 
-def fit(model, data, device):
+def fit(model, data, device, *, artifacts, arm, seed, dataset_path):
     train_x, train_y, val_x, val_y = (
         tensor.to(device) for tensor in data
     )
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.006, weight_decay=0.001)
+    best = BestCheckpoint()
     started = time.monotonic()
-    for _ in range(EPOCHS):
+    for step in range(EPOCHS):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         loss = F.cross_entropy(model(train_x), train_y)
+        best.observe(model, loss.item(), step)
         loss.backward()
         optimizer.step()
     model.eval()
     with torch.no_grad():
+        best.observe(model, F.cross_entropy(model(train_x), train_y).item(), EPOCHS)
         predicted = model(val_x).argmax(dim=1)
         accuracy = (predicted == val_y).float().mean().item()
         heldout_loss = F.cross_entropy(model(val_x), val_y).item()
     if device.type == "cuda":
         torch.cuda.synchronize()
-    return accuracy, heldout_loss, time.monotonic() - started
+    elapsed = time.monotonic() - started
+    best.save(artifacts, f"{arm}-seed-{seed}-best", arm=arm, seed=seed,
+              config={"script": "conditioned_low_rank_gate.py", "width": WIDTH, "blocks": 2, "epochs": EPOCHS},
+              datasets=[dataset_path])
+    return accuracy, heldout_loss, elapsed
 
 
 def main():
@@ -101,13 +110,20 @@ def main():
     baseline_params = sum(p.numel() for p in Network(DenseBlock).parameters())
     candidate_params = sum(p.numel() for p in Network(GatedLowRankBlock).parameters())
     assert abs(candidate_params / baseline_params - 1) < 0.05
+    output = Path("/output")
+    artifacts = ArtifactWriter(output)
     records = []
     for seed in SEEDS:
         data = task(seed)
+        dataset = artifacts.save_dataset(f"cross-feature-seed-{seed}",
+            dict(zip(("train_x", "train_y", "heldout_x", "heldout_y"), data)),
+            provenance={"kind": "generated", "generator": "conditioned_low_rank_gate.py:task", "seed": seed,
+                        "description": "Gaussian 16-feature classification with linear, multiplicative, and sinusoidal teacher; four classes",
+                        "split": "1536 training rows, 512 held-out rows", "downloads": False})
         torch.manual_seed(seed)
-        baseline = fit(Network(DenseBlock), data, device)
+        baseline = fit(Network(DenseBlock), data, device, artifacts=artifacts, arm="baseline", seed=seed, dataset_path=dataset["path"])
         torch.manual_seed(seed)
-        candidate = fit(Network(GatedLowRankBlock), data, device)
+        candidate = fit(Network(GatedLowRankBlock), data, device, artifacts=artifacts, arm="candidate", seed=seed, dataset_path=dataset["path"])
         records.append(
             {"seed": seed, "baseline_accuracy": baseline[0], "candidate_accuracy": candidate[0],
              "baseline_loss": baseline[1], "candidate_loss": candidate[1],
@@ -133,8 +149,7 @@ def main():
             "parameter counts within 5%. Exploratory comparison, not a novelty claim."
         ),
     }
-    output = Path("/output")
-    output.mkdir(parents=True, exist_ok=True)
+    result["summary"] += " Data and best-training-loss weights: artifacts.json; reported metrics remain final-update metrics."
     (output / "details.json").write_text(json.dumps({"device": str(device), "records": records}, indent=2))
     (output / "result.json").write_text(json.dumps(result, allow_nan=False, indent=2))
     print(json.dumps(result, allow_nan=False))

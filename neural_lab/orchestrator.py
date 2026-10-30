@@ -15,8 +15,11 @@ import time
 from collections import deque
 
 
+CONTEXT_HANDOFF_REASON = "context exceeded 60% of reported window"
+
 PROMPT = """You are the neural-lab research orchestrator. Work in /repo. Use Codex
-subagents for independent literature research, experiment design, and implementation.
+subagents for independent literature research, experiment planning, implementation,
+and independent review. Delegate those tasks rather than doing all work yourself.
 Read /repo/.neural-lab/notes/latest-session.json and earlier notes before work.
 Your objective is novel neural-network architecture experiments with reproducible
 comparisons against the queued baselines. You may edit code and research with internet
@@ -28,7 +31,24 @@ in the public repository. Do not use API keys or paid API credits. Do not modify
 the trusted worker or its Docker boundary to give a training script host access.
 Require subagents to write their findings to /repo/.neural-lab/notes/. Update
 /repo/.neural-lab/notes/ after each completed research result or queued
-experiment. Finish this session with a concise handoff note. A new session will begin later.
+experiment. Keep notes durable throughout the session: the controller hands off
+above 60% of the server-reported context window. Finish this session with a concise
+handoff note. A fresh session will read the notes and continue later.
+
+Every new experiment must save reproducible data provenance and model weights,
+not just scalar metrics. Use neural_lab.artifacts.ArtifactWriter('/output') for
+datasets and an artifacts.json manifest. For synthetic tasks save the exact split
+tensors with save_dataset and record the generator, seeds, split sizes, and hashes.
+For public Hugging Face datasets record repository, resolved revision, split,
+license/provenance URL, preprocessing, and exact used data. Download only inside
+queued training containers. Never copy Codex credentials into a training job.
+Use BestCheckpoint to retain each arm/seed's lowest observed training cross entropy
+and save its selection metric, step, scope, model config, and linked dataset paths.
+Preserve final held-out metrics independently; do not select weights on test data
+or claim a final-only checkpoint was the best over the full training trajectory.
+In experiment notes and result summaries link artifacts.json, checkpoint weights,
+dataset payloads/manifests, source script, and any Hugging Face source page. State
+explicitly when older jobs have no checkpoint; never invent historical weights.
 """
 
 
@@ -127,12 +147,24 @@ class AppServer:
             ["codex", "app-server", "--stdio", "-c", 'forced_login_method="chatgpt"',
              "-c", 'model_provider="openai"', "-c", 'web_search="live"',
              "-c", "check_for_update_on_startup=false", "-c", "features.multi_agent=true"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True,
         )
         self.buffer = bytearray()
         self.pending = deque()
         self.sequence = 0
+        self.model_catalog_error = None
+        self.stderr_reader = threading.Thread(target=self._read_diagnostics, daemon=True)
+        self.stderr_reader.start()
+
+    def _read_diagnostics(self):
+        """Keep only fixed diagnostic categories, never raw CLI logs or secrets."""
+        while chunk := self.process.stderr.readline(8192):
+            if b"failed to refresh available models:" in chunk:
+                self.model_catalog_error = (
+                    "model catalog refresh timed out" if b"request timed out" in chunk
+                    else "model catalog refresh failed"
+                )
 
     def send(self, method: str, params: dict | None = None) -> int:
         self.sequence += 1
@@ -208,6 +240,8 @@ class AppServer:
                 pass
             self.process.wait()
         self.process.stdout.close()
+        self.stderr_reader.join(timeout=1)
+        self.process.stderr.close()
 
 
 def context_usage(notification: dict) -> tuple[int, int]:
@@ -216,10 +250,9 @@ def context_usage(notification: dict) -> tuple[int, int]:
     window = usage.get("modelContextWindow")
     last = usage.get("last", {})
     used = last.get("totalTokens")
-    # Codex can reserve part of a nominal 500k window for compaction, so its
-    # effective reported window may be around 475k. The handoff is fixed at 250k.
-    if type(window) is not int or window < 475_000:
-        raise RuntimeError("Active model did not report a compatible 500k context window")
+    if type(window) is not int or window <= 0:
+        observed = str(window) if type(window) is int else "unavailable"
+        raise RuntimeError(f"Codex did not report a positive context window (reported {observed})")
     if type(used) is not int or used < 0:
         raise RuntimeError("Codex did not report live context usage")
     return used, window
@@ -309,6 +342,7 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
         recent_messages = deque(maxlen=4)
         handoff = {"thread_id": thread_id, "turn_id": turn_id, "model": model,
                    "reason": "running", "last_tokens": None, "model_context_window": None,
+                   "context_handoff_fraction": 0.6, "context_handoff_tokens": None,
                    "recent_agent_messages": [], "updated_at": time.time()}
         write_handoff(repo, handoff)
         next_usage_poll = time.monotonic() + usage_poll_seconds
@@ -368,10 +402,24 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
                     fraction = used_tokens / context_window
                 except RuntimeError as exc:
                     reason = str(exc)
+                    fraction = None
+                    # Preserve the rejected numeric observation for diagnosis instead
+                    # of losing it when tuple assignment above raises.
+                    raw = params.get("tokenUsage") or {}
+                    reported_window = raw.get("modelContextWindow")
+                    reported_used = (raw.get("last") or {}).get("totalTokens")
+                    context_window = reported_window if type(reported_window) is int else None
+                    used_tokens = reported_used if type(reported_used) is int else None
+                    catalog_error = getattr(server, "model_catalog_error", None)
+                    if catalog_error:
+                        reason += "; " + catalog_error
+                        handoff["model_catalog_error"] = catalog_error
                 else:
-                    if used_tokens > 250_000:
-                        reason = "context exceeded 250000 tokens"
+                    # Integer comparison keeps the strict >60% boundary exact.
+                    if used_tokens * 5 > context_window * 3:
+                        reason = CONTEXT_HANDOFF_REASON
                 handoff.update(last_tokens=used_tokens, model_context_window=context_window,
+                               context_handoff_tokens=context_window * 3 / 5 if context_window and context_window > 0 else None,
                                reason=reason or "running", updated_at=time.time())
                 write_handoff(repo, handoff)
             elif message.get("method") == "item/completed":
@@ -394,11 +442,13 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
                                model_context_window=context_window,
                                recent_agent_messages=list(recent_messages), updated_at=time.time())
                 write_handoff(repo, handoff)
-                success = (status == "completed" and reason is None) or reason == "context exceeded 250000 tokens"
+                success = (status == "completed" and reason is None) or reason == CONTEXT_HANDOFF_REASON
                 return {"exit_code": 0 if success else 1,
                         "reason": reason or status, "context_fraction": fraction,
                         "context_window_verified": telemetry_seen and fraction is not None,
-                        "last_tokens": used_tokens, "model_context_window": context_window}
+                        "last_tokens": used_tokens, "model_context_window": context_window,
+                        "context_handoff_fraction": 0.6,
+                        "context_handoff_tokens": handoff["context_handoff_tokens"]}
     except Exception as exc:
         if "handoff" in locals():
             handoff.update(reason="error: " + type(exc).__name__, updated_at=time.time())
@@ -416,7 +466,7 @@ def main(argv=None) -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
     if not args.model:
-        parser.error("Set a ChatGPT subscription-backed Codex model with a nominal 500k context window")
+        parser.error("Set a ChatGPT subscription-backed Codex model")
     if args.poll_seconds < 1:
         parser.error("--poll-seconds must be positive")
     notes = args.repo / ".neural-lab" / "notes"

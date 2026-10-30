@@ -97,14 +97,28 @@ protocol with ChatGPT login and the OpenAI model provider. It does not use API
 keys or automatically switch to API billing. [Codex models](https://learn.chatgpt.com/docs/models),
 [app-server protocol](https://learn.chatgpt.com/docs/app-server).
 
-Each session starts a new thread and delegates research and implementation to
-subagents. The controller watches `thread/tokenUsage/updated` and interrupts the
-turn when the latest model call reports more than **250,000 tokens**. It then
-shuts down that app-server and starts a fresh session after the configured pause.
-Telemetry arrives between model calls, so crossing the threshold is detected at
-the next update; this cannot stop a model call partway through its token stream.
-The server's effective context window is checked without overriding model
-metadata. A missing or incompatible report causes a pause.
+Each session starts a new thread and delegates research, experiment planning,
+implementation, and independent review to subagents. The controller watches
+`thread/tokenUsage/updated` and hands off when the latest model call reports
+usage **strictly above 60% of its reported context window**. A 258,400-token
+window hands off above 155,040 tokens; a 475,000-token window hands off above
+285,000 tokens. The exact 60% boundary continues. Smaller reported windows are
+accepted without overriding or fabricating model metadata.
+
+Context handoff is an expected successful session outcome: the controller saves
+the actual window, token count, dynamic threshold, session IDs, and recent agent
+messages before interruption. It shuts down that app-server and starts a fresh
+thread after the configured pause, carrying the prior handoff forward. Subagents
+must write durable findings throughout work so the next session can continue.
+Telemetry arrives between model calls, so crossing is detected at the next
+update; this cannot stop a model call partway through its token stream. Missing
+or invalid telemetry still causes a conservative pause.
+
+On this host a timed-out Codex model-catalog refresh produced a 258,400-token
+report for `gpt-6.1-sol`, while earlier sessions reported 475,000. This no longer
+fails the controller: the threshold adapts to the active reported window. Fixed
+catalog-error categories are retained for invalid-telemetry diagnostics without
+storing raw CLI logs or credentials. The independent worker continues queued jobs.
 
 Handoff notes are private under `.neural-lab/notes/`. The controller records token
 usage, session identifiers, interruption reasons, and recent agent messages in an

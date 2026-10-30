@@ -60,8 +60,72 @@ products have established prior art, including
 development screening data; confirmation requires fresh seeds and tasks.
 Timing has fixed arm order and supports no speed claim.
 
+## Saved training data and checkpoint weights
+
+New revisions of the starter, gate, energy, centered-product, and product-scale jobs write an
+`artifacts.json` manifest in their output directory. Dataset files under
+`datasets/` contain the actual split tensors in compressed NPZ form, with numeric
+dtypes only. The manifest records tensor shapes/dtypes, generator, seeds, split
+description, file size, and SHA-256. These jobs use generated Gaussian features
+and synthetic four-class teachers, not downloaded natural-language or image data.
+The starter uses 512 train/128 validation examples; the candidate screen uses
+1,536 train/512 held-out examples per seed.
+
+Each arm and seed saves weights under `checkpoints/`. Selection minimizes observed
+**training** cross-entropy. Starter/gate/energy/centered-product jobs observe the
+initialized model and every training update; the product-scale diagnostic saves
+the best among its existing diagnostic evaluations at updates 0, 10, 25, and 55.
+Held-out examples are not used to choose weights. Checkpoint metadata states the
+selection metric/value, update, observation count, arm, seed, and configuration.
+Result metrics still describe the final update, so they should not be presented
+as validation metrics of the selected checkpoint. Checkpoint copying adds training
+overhead; these timings do not establish speed comparisons with historical runs.
+
+Weights use the pickle-free `neural-lab-state-dict-v1` JSON format, which includes
+each tensor's dtype, shape, and values. In a training/review container, reconstruct
+the architecture from the reviewed script, then load the tensor dictionary with
+`neural_lab.artifacts.load_json_state(checkpoint_path)` and `model.load_state_dict`.
+Load NPZ datasets with `numpy.load(dataset_path, allow_pickle=False)`.
+
+Historical output directories are preserved. A manifest or weights absent from an
+older run were not saved by that run; changes to a script produce a new queue
+revision rather than retroactively changing its result. The original starter
+`model-state.json` files contain final candidate weights, not selected best weights.
+The shared `ArtifactWriter` and `BestCheckpoint` helpers are available for future
+scientist-authored experiments to follow the same contract.
+
 Queue the self-contained script without running training locally:
 
 ```bash
 python3 -m neural_lab.queue enqueue jobs/candidates/centered_product_mixer.py --hypothesis "Centered low-rank product residuals improve held-out loss over dense residual and same-parameter centered additive controls under a fixed three-seed cross-feature protocol."
+```
+
+## Frozen product-scale diagnostic
+
+`jobs/candidates/product_scale_diagnostic.py` compares dense, centered additive,
+raw centered product, and a product with one frozen scalar per block. At shared
+initialization, each scalar is the additive fused RMS divided by product fused
+RMS (denominator floored at 1e-8), measured on the additive network's training
+hidden trajectory. It multiplies product features before the up projection and
+GELU. This matches initial aggregate second moments on that reference, without
+normalizing each example or guaranteeing matching later in training.
+
+The 24 fits use three fresh teacher seeds (5101–5103), two initialization seeds
+(7101–7102), and separate training/development generators (6101/6102). Teacher
+weights are drawn independently from features. Every teacher uses the same
+feature draws deliberately; initializations are repeated within each teacher.
+Width, rank, depth, parameter counts, optimizer and 55-update budget match the
+centered-product screen. Checkpoints at 0/10/25/55 record training/development
+performance and activation/logit magnitudes. Per-teacher paired differences
+are the task-level comparisons; individual predictions are not replicates.
+
+The primary endpoint is step-55 development loss, scaled minus raw product.
+Dense and additive comparisons provide context. No final test is generated;
+this diagnostic supports no promotion, general superiority or novelty claim.
+Bilinear fusion and scale stabilization have established prior art, including
+[Multi-modal Factorized Bilinear Pooling](https://arxiv.org/abs/1708.01471).
+No architecture or gain sweep is part of the job. Queue without local training:
+
+```bash
+python3 -m neural_lab.queue enqueue jobs/candidates/product_scale_diagnostic.py --hypothesis "Frozen training-initialized pre-up product scale calibration reduces development cross entropy versus raw centered products under a preregistered fresh three-teacher, two-initialization protocol; dense and additive controls contextualize the diagnostic."
 ```
