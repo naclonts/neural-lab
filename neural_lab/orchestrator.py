@@ -38,8 +38,11 @@ handoff note. A fresh session will read the notes and continue later.
 The operator wants substantially more training per scientist session. Tiny
 synthetic CPU screens are preliminary diagnostics, not the main research output.
 Prioritize substantive CUDA campaigns on the RTX 2070 (8 GiB VRAM): aim for
-roughly 10–20 minutes of useful training per queued job, with a 1,800-second
-timeout covering downloads, training, evaluation, and artifact writes. Increase
+roughly 1–4 hours of useful training per queued substantive job; longer experiments
+are authorized when scientifically justified. Set an explicit per-job timeout
+with headroom for downloads, evaluation, and artifact writes, up to the queue's
+86,400-second (24-hour) maximum. The old 10–20-minute target and 1,800-second cap
+are superseded. Increase
 dataset size, model capacity, minibatch work, and optimization budget where the
 hypothesis warrants it; never add sleeps, redundant fits, or arbitrary work just
 to meet a runtime target. Use public real-world Hugging Face benchmarks when
@@ -51,11 +54,15 @@ next main campaign. CPU data preparation and small correctness checks are fine.
 Freeze fair controls, seed replicates, splits, evaluation, and compute budgets
 before training. Queue 2–4 justified complementary jobs per campaign when useful,
 so the independent worker has work during subscription pauses. Explicitly pass
---timeout-seconds 1800. Keep one GPU job at a time and all existing boundaries.
+--timeout-seconds with the planned budget plus overhead; do not rely on the
+queue's short default. Keep one GPU job at a time and all existing boundaries.
+Use learning curves and existing results to justify optimization length and
+competitive baseline training. Short calibration or mechanistic diagnostics
+remain appropriate, but do not substitute for substantive experiments. Freeze
+longer follow-ups prospectively; preserve completed negative results rather than
+extending an observed run selectively until it succeeds.
 Use bounded subagent briefs and reuse their durable findings across a campaign;
 avoid repeating literature reviews while a runnable, reviewed experiment waits.
-The prior relational-geometry proposal is still unqueued: revise its tiny CPU
-training budget and complete review under this new policy before enqueuing it.
 
 Every new experiment must save reproducible data provenance and model weights,
 not just scalar metrics. Use neural_lab.artifacts.ArtifactWriter('/output') for
@@ -141,24 +148,26 @@ def rpc_snapshot(timeout: int = 20) -> dict:
     return replies[3].get("result") or {}
 
 
-def capacity_ok(snapshot: dict, threshold: int = 75) -> tuple[bool, str]:
+def capacity_ok(snapshot: dict) -> tuple[bool, str]:
     if snapshot.get("ordinaryUsageAllowed") is False:
         return False, "included subscription usage unavailable"
     buckets = snapshot.get("rateLimitsByLimitId") or {"default": snapshot.get("rateLimits")}
-    percentages = []
+    windows = []
     for bucket in buckets.values():
         if not isinstance(bucket, dict):
             continue
-        for name in ("primary", "secondary"):
+        for name, label, threshold in (("primary", "5-hour", 75), ("secondary", "weekly", 95)):
             window = bucket.get(name)
             if isinstance(window, dict) and type(window.get("usedPercent")) in (int, float):
                 value = window["usedPercent"]
                 if 0 <= value <= 100:
-                    percentages.append(value)
-    if not percentages:
+                    windows.append((label, value, threshold))
+    if not windows:
         return False, "subscription usage percentage unavailable"
-    high = max(percentages)
-    return high < threshold, f"highest subscription window usage {high}%"
+    blocked = [window for window in windows if window[1] >= window[2]]
+    detail = "; ".join(f"{label} usage {value}% (pause at {threshold}%)"
+                       for label, value, threshold in (blocked or windows))
+    return not blocked, detail
 
 
 class AppServer:

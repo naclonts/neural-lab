@@ -47,6 +47,21 @@ class OrchestratorTests(unittest.TestCase):
         snapshot["rateLimitsByLimitId"] = {"codex": {"primary": {"usedPercent": float("nan")}}}
         self.assertFalse(capacity_ok(snapshot)[0])
 
+    def test_weekly_gate_uses_95_percent_independently_of_five_hour_gate(self):
+        snapshot = {"rateLimits": {"primary": {"usedPercent": 7},
+                                   "secondary": {"usedPercent": 94}}}
+        self.assertTrue(capacity_ok(snapshot)[0])
+        snapshot["rateLimits"]["secondary"]["usedPercent"] = 95
+        permitted, reason = capacity_ok(snapshot)
+        self.assertFalse(permitted)
+        self.assertIn("weekly usage 95% (pause at 95%)", reason)
+        snapshot["rateLimits"]["secondary"]["usedPercent"] = 76
+        self.assertTrue(capacity_ok(snapshot)[0])
+        snapshot["rateLimits"]["primary"]["usedPercent"] = 75
+        permitted, reason = capacity_ok(snapshot)
+        self.assertFalse(permitted)
+        self.assertIn("5-hour usage 75% (pause at 75%)", reason)
+
     def test_rpc_waits_for_initialize_then_parses_batched_replies(self):
         server = r'''
 import json, sys

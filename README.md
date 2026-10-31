@@ -6,7 +6,8 @@ with an NVIDIA GPU.
 **Current status:** GPU sandbox, offline visualizations, a bounded experiment loop,
 and a persistent queue for deterministic training jobs. The headless research stack
 uses subscription-backed GPT-6.1 Sol, subagents, live context handoff above 250k
-tokens, and a 75% subscription usage pause.
+tokens, and subscription usage pauses at 75% of the five-hour allowance or 95% of
+the weekly allowance.
 Independent evaluation, Hugging Face publishing, and unattended-operation
 hardening remain to be built.
 

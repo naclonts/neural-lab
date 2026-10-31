@@ -67,13 +67,19 @@ the same user, read-only filesystem, capability, mount, and resource limits.
 ## Monitor and control
 
 The scientist now targets substantive CUDA training campaigns rather than a
-sequence of tiny CPU screens. Typical useful training should take about 10–20
-minutes per job within a 30-minute timeout. Runtime is a planning target, not an
+sequence of tiny CPU screens. Typical useful training should take about 1–4
+hours per substantive job; longer runs are authorized when scientifically justified.
+Set an explicit timeout with preparation, evaluation, and artifact headroom, up
+to the queue's 24-hour maximum. This supersedes the earlier 10–20-minute target
+and 30-minute timeout. Runtime is a planning target, not an
 instruction to pad experiments. The controller requests 2–4 justified, reviewed
 jobs per campaign when appropriate, larger data/model/training budgets, fair
 controls, and recorded CUDA placement, training time, and peak GPU memory.
-Public Hugging Face benchmarks are available in the training image. The pending
-relational proposal must be revised and reviewed under this policy before use.
+Public Hugging Face benchmarks are available in the training image. Short
+calibration and mechanistic diagnostics remain appropriate. Use learning curves
+and existing results to plan adequate optimization and competitive baselines.
+Freeze longer follow-ups prospectively rather than selectively extending observed
+runs until a favorable result appears.
 Existing completed experiments and their frozen protocols are preserved.
 
 ```bash
@@ -137,12 +143,14 @@ write findings incrementally so work survives context rollover or restart.
 [Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents).
 
 Before a session, the controller verifies ChatGPT authentication and reads
-`account/rateLimits/read`. It pauses new model work when any reported primary or
-secondary usage window reaches **75%**, when included usage is explicitly blocked,
+`account/rateLimits/read`. It pauses new model work when any reported primary
+(five-hour) usage window reaches **75%** or secondary (weekly) window reaches
+**95%**, when included usage is explicitly blocked,
 or when usable quota information is unavailable. It also checks quota during
 active work and interrupts the turn if the threshold is reached. It rechecks
-capacity periodically and resumes when the account reports capacity below the
-threshold. The independent GPU worker continues processing queued jobs throughout.
+capacity periodically and resumes when both windows are below their respective
+thresholds. Quota messages identify the window, usage, and threshold. The
+independent GPU worker continues processing queued jobs throughout.
 Usage reads and interruptions are not billing transactions; a model call already
 in flight can finish before a quota update arrives.
 
