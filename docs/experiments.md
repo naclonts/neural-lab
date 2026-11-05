@@ -1,5 +1,9 @@
 # Candidate architecture experiments
 
+Future scientist campaigns follow [AI-assisted logical verification](research-direction.md).
+The experiments below are historical architecture studies and explicit demos;
+they do not set the current scientist objective.
+
 ## Overnight exploratory screens
 
 The following completed scripts retain exact synthetic data, training-selected

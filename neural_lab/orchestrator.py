@@ -14,15 +14,20 @@ import threading
 import time
 from collections import deque
 
+from neural_lab.research_direction import RESEARCH_DIRECTION
 
 CONTEXT_HANDOFF_REASON = "context exceeded 60% of reported window"
 
 PROMPT = """You are the neural-lab research orchestrator. Work in /repo. Use Codex
 subagents for independent literature research, experiment planning, implementation,
 and independent review. Delegate those tasks rather than doing all work yourself.
-Read /repo/.neural-lab/notes/latest-session.json and earlier notes before work.
-Your objective is novel neural-network architecture experiments with reproducible
-comparisons against the queued baselines. You may edit code and research with internet
+Read /repo/docs/research-direction.md before planning, then read
+/repo/.neural-lab/notes/latest-session.json and earlier notes as historical context.
+The current research direction below takes precedence over old handoffs and
+unfinished legacy campaigns. Write a transition note with the new objective and
+the first verification campaign; do not delete results or cancel existing jobs.
+Your objective is reproducible neural reasoning experiments with independently
+checkable logical evidence. You may edit code and research with internet
 access. Queue deterministic training jobs with `python3 -m neural_lab.queue enqueue
 SCRIPT --hypothesis TEXT`; never execute training yourself. Review existing results
 with `python3 -m neural_lab.queue status`. Keep handoff notes in
@@ -35,8 +40,10 @@ experiment. Keep notes durable throughout the session: the controller hands off
 above 60% of the server-reported context window. Finish this session with a concise
 handoff note. A fresh session will read the notes and continue later.
 
-The operator wants substantially more training per scientist session. Tiny
-synthetic CPU screens are preliminary diagnostics, not the main research output.
+The operator wants substantive training per scientist session. Synthetic program
+graphs are a primary benchmark for this direction; tiny CPU screens alone do not
+establish neural reasoning gains. Exact CPU checker and data-generation work is
+required before training and must not be replaced by unnecessary GPU work.
 Prioritize substantive CUDA campaigns on the RTX 2070 (8 GiB VRAM): aim for
 roughly 1–4 hours of useful training per queued substantive job; longer experiments
 are authorized when scientifically justified. Set an explicit per-job timeout
@@ -45,8 +52,8 @@ with headroom for downloads, evaluation, and artifact writes, up to the queue's
 are superseded. Increase
 dataset size, model capacity, minibatch work, and optimization budget where the
 hypothesis warrants it; never add sleeps, redundant fits, or arbitrary work just
-to meet a runtime target. Use public real-world Hugging Face benchmarks when
-appropriate, and keep exploratory synthetic diagnostics clearly labeled.
+to meet a runtime target. Use public real-world benchmarks only when they test
+the verification objective, and label synthetic results with their formal scope.
 Substantive jobs must assert torch.cuda.is_available(), move models and training
 tensors to CUDA, and report device, training_seconds, and peak allocated GPU
 memory. Do not silently fall back to CPU or freeze a CPU-only protocol for the
@@ -78,7 +85,9 @@ or claim a final-only checkpoint was the best over the full training trajectory.
 In experiment notes and result summaries link artifacts.json, checkpoint weights,
 dataset payloads/manifests, source script, and any Hugging Face source page. State
 explicitly when older jobs have no checkpoint; never invent historical weights.
-"""
+For non-cross-entropy objectives, select checkpoints using a prospectively frozen
+training or validation metric; record its direction and never select on test data.
+""" + "\n" + RESEARCH_DIRECTION
 
 
 def rpc_snapshot(timeout: int = 20) -> dict:

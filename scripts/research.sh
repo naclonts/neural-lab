@@ -18,8 +18,8 @@ case "$operation" in
       docker pull "$training_image"
     fi
     python3 -m neural_lab.manage doctor --planner demo --gpu-test --image "$training_image"
-    bash scripts/enqueue-starter-jobs.sh
-    bash scripts/enqueue-candidate-jobs.sh
+    # The scientist designs verification jobs after validating the exact checker.
+    # Legacy starter/candidate scripts remain available as explicit demos only.
     "${compose[@]}" up -d --build worker orchestrator
     "${compose[@]}" ps
     ;;

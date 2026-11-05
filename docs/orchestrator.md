@@ -5,6 +5,11 @@ The orchestrator researches architectures, delegates to subagents, implements
 training scripts, and queues them. Queued jobs make no OpenAI calls and continue
 while the orchestrator waits for subscription capacity.
 
+The active objective is [AI-assisted logical verification](research-direction.md):
+claim-to-query translation, premise retrieval, and neural-guided proof search with
+independently checked evidence. The agenda supersedes priorities in older handoff
+notes. See that document for the first campaign and updating an existing laptop.
+
 ## Start on the laptop
 
 Use a regular Linux account with access to the local Docker daemon and a working
@@ -19,9 +24,10 @@ bash scripts/research.sh start
 The login script opens the official ChatGPT device login flow. Complete that in
 your browser once. Credentials stay in a dedicated directory outside the public
 checkout, defaulting to `~/.local/share/neural-lab/codex`. The startup script pulls
-the GPU image, checks real GPU execution, builds both research containers, and
-queues the starter jobs. Repeated startup does not duplicate existing starter or
-candidate jobs.
+the GPU image, checks real GPU execution, and builds both research containers.
+The scientist validates the symbolic checker and designs verification jobs;
+startup does not enqueue legacy starter or candidate experiments. Those scripts
+remain available manually. Existing queue entries and results are preserved.
 
 Setup preserves existing `.env` values and adds missing paths and Docker group
 settings. Check `LAB_REPO_DIR`, `DOCKER_GID`, and `NEURAL_LAB_CODEX_HOME` after
@@ -75,7 +81,9 @@ and 30-minute timeout. Runtime is a planning target, not an
 instruction to pad experiments. The controller requests 2–4 justified, reviewed
 jobs per campaign when appropriate, larger data/model/training budgets, fair
 controls, and recorded CUDA placement, training time, and peak GPU memory.
-Public Hugging Face benchmarks are available in the training image. Short
+Synthetic program graphs are a primary reasoning benchmark, with CPU checker
+audits before CUDA training. Public Hugging Face benchmarks are available in the
+training image when relevant to verification. Short
 calibration and mechanistic diagnostics remain appropriate. Use learning curves
 and existing results to plan adequate optimization and competitive baselines.
 Freeze longer follow-ups prospectively rather than selectively extending observed
@@ -89,10 +97,10 @@ python3 -m neural_lab.queue status
 ```
 
 The status command shows queue counts, job metrics, service state, and recent
-logs. Outputs live in `.neural-lab/queue-outputs/<job-id>/`. The initial jobs compare
-three baseline architectures and two candidate designs; see
-[experiment descriptions](experiments.md). These are exploratory experiments,
-with no established novelty or improvement claim.
+logs. Outputs live in `.neural-lab/queue-outputs/<job-id>/`. Historical generic
+architecture experiments remain documented in [experiment descriptions](experiments.md).
+New campaigns follow the active verification agenda, with no established novelty
+or improvement claim until measured.
 
 ```bash
 bash scripts/research.sh pause-research

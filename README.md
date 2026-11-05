@@ -3,6 +3,12 @@
 A starting point for an autonomous neural-network research lab on a Linux laptop
 with an NVIDIA GPU.
 
+**Research focus:** AI-assisted logical verification of code: compact neural
+models construct queries, select premises, and guide search while deterministic
+checkers validate evidence. Start with synthetic program graphs, then progress
+to real Go call graphs and Kubernetes. See the [active research agenda](docs/research-direction.md)
+for NL-001, verification semantics, evaluation, and laptop update instructions.
+
 **Current status:** GPU sandbox, offline visualizations, a bounded experiment loop,
 and a persistent queue for deterministic training jobs. The headless research stack
 uses subscription-backed GPT-6.1 Sol, subagents, live context handoff above 250k
@@ -112,8 +118,9 @@ bash scripts/research.sh start
 bash scripts/research.sh status
 ```
 
-The queue worker uses no OpenAI subscription while it trains. Startup queues three
-controls and two candidate architectures once. Read [research stack setup](docs/orchestrator.md),
+The queue worker uses no OpenAI subscription while it trains. The scientist designs
+verification experiments from the active agenda; startup no longer queues the
+legacy MLP controls and candidates automatically. Read [research stack setup](docs/orchestrator.md),
 [candidate experiments](docs/experiments.md), and [queue operations](docs/queue.md)
 for account setup, job recovery, and results. Docker and NVIDIA access must be
 validated on the target laptop.
