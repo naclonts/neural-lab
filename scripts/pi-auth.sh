@@ -11,7 +11,23 @@ case "$operation" in
   *) echo "Usage: bash scripts/pi-auth.sh [status|set-key|clear|build]" >&2; exit 2 ;;
 esac
 umask 077
+# Read KEY=VALUE pairs from .env (last match wins, surrounding quotes stripped)
+# without sourcing it, so a stray line cannot execute arbitrary shell code.
+env_get() {
+  [ -f .env ] || return 0
+  grep -E "^$1=" .env | tail -n1 | cut -d= -f2- | sed -e "s/^['\"]//" -e "s/['\"]\$//"
+}
 auth_dir="${NEURAL_LAB_PI_HOME:-$HOME/.local/share/neural-lab/pi}"
+# Resolve the model/providers from the environment, falling back to .env; the
+# status check must probe the exact model the orchestrator will run.
+model="${NEURAL_LAB_ORCH_MODEL:-$(env_get NEURAL_LAB_ORCH_MODEL)}"
+model="${model:-anthropic/claude-sonnet-4.5}"
+# Provider: PI_PROVIDER wins; otherwise derive it from the model prefix
+# ("fireworks/accounts/..." -> "fireworks"), else default to anthropic.
+provider="${PI_PROVIDER:-}"
+if [ -z "$provider" ]; then
+  case "$model" in */*) provider="${model%%/*}" ;; *) provider="anthropic" ;; esac
+fi
 if [ -f .env ]; then
   compose_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["pi-orchestrator"]["volumes"] if v["target"] == "/pi"))')"
   if [ -n "${NEURAL_LAB_PI_HOME:-}" ]; then
@@ -43,7 +59,6 @@ case "$operation" in
   # process list and shell history.
   set-key)
     key="$(cat)"
-    provider="${PI_PROVIDER:-anthropic}"
     PI_AUTH_KEY="$key" PI_AUTH_PROVIDER="$provider" python3 -c '
 import json, os, sys
 provider, key = os.environ["PI_AUTH_PROVIDER"], os.environ["PI_AUTH_KEY"].strip()
@@ -51,7 +66,7 @@ if not key:
     sys.exit("Provide the API key on STDIN, for example: pbpaste | bash scripts/pi-auth.sh set-key")
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as stream:
-    json.dump({provider: {"type": "api", "key": key}}, stream)
+    json.dump({provider: {"type": "api_key", "key": key}}, stream)
     stream.write("\n")
 ' "$auth_dir/auth.json"
     chmod 600 -- "$auth_dir/auth.json"
@@ -72,7 +87,7 @@ with os.fdopen(fd, "w") as stream:
       --mount "type=bind,src=$auth_dir,dst=/pi" \
       --env PI_CODING_AGENT_DIR=/pi \
       neural-lab-pi:1.5.0 \
-      --print --no-session --offline -ne -ns -np -nc ok >/dev/null
+      --print --no-session --offline -ne -ns -np -nc --model "$model" ok >/dev/null
     started=0
     docker start -a "$name" || started=$?
     # docker start -a does not reliably propagate the container's exit code,
@@ -83,6 +98,6 @@ with os.fdopen(fd, "w") as stream:
       echo "pi auth check failed; run: printf 'YOUR_KEY' | bash scripts/pi-auth.sh set-key" >&2
       exit 1
     fi
-    echo "pi API-key auth is available (provider ${PI_PROVIDER:-anthropic})."
+    echo "pi API-key auth is available (provider $provider, model $model)."
     ;;
 esac
