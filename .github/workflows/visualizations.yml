@@ -93,8 +93,9 @@ jobs:
           NEURAL_LAB_DOCKER_TESTS: "1"
         run: |
           # Surface failing tests as annotations (visible via API) plus a log tail.
-          python -m unittest discover -s tests -v > "${RUNNER_TEMP}/test-output.log" 2>&1
-          status=$?
+          # The ||-capture avoids bash -e aborting before annotations are emitted.
+          status=0
+          python -m unittest discover -s tests -v > "${RUNNER_TEMP}/test-output.log" 2>&1 || status=$?
           tail -n 40 "${RUNNER_TEMP}/test-output.log"
           if [ "$status" -ne 0 ]; then
             grep -E "^(FAIL|ERROR):" "${RUNNER_TEMP}/test-output.log" | sort -u | head -25 \
