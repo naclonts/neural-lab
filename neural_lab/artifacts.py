@@ -71,17 +71,28 @@ class ArtifactWriter:
         return self._record("datasets", path, label, format="npz", source=provenance, arrays=schema)
 
     def save_checkpoint(self, label, state, *, arm, seed, selection, config=None, datasets=()):
-        """Save an architecture-independent typed JSON state dictionary."""
-        path = self.output / "checkpoints" / (_slug(label) + ".json")
+        """Save a torch-serialized (.pt) state dictionary with plain metadata.
+
+        The payload contains only tensors and plain Python types, so it loads
+        under torch.load(weights_only=True) without executing model code.
+        """
+        import torch
+
+        path = self.output / "checkpoints" / (_slug(label) + ".pt")
         path.parent.mkdir(parents=True, exist_ok=True)
         state = state.state_dict() if hasattr(state, "state_dict") else state
-        tensors = {name: {"dtype": str(tensor.dtype).removeprefix("torch."),
-                          "shape": list(tensor.shape), "data": tensor.detach().cpu().tolist()}
-                   for name, tensor in state.items()}
-        _json(path, {"format": "neural-lab-state-dict-v1", "tensors": tensors,
-                     "arm": arm, "seed": seed, "selection": selection, "config": config or {}})
-        return self._record("checkpoints", path, label, format="json-state-dict", arm=arm,
-                            seed=seed, selection=selection, config=config or {}, datasets=list(datasets))
+        tensors = {}
+        for name, tensor in state.items():
+            if not isinstance(tensor, torch.Tensor):
+                raise ValueError("Checkpoint state must contain only tensors")
+            tensors[name] = tensor.detach().cpu()
+        torch.save({"format": "neural-lab-state-dict-pt-v1", "tensors": tensors,
+                    "arm": arm, "seed": seed, "selection": selection, "config": config or {}}, path)
+        schema = {name: {"dtype": str(tensor.dtype).removeprefix("torch."),
+                         "shape": list(tensor.shape)} for name, tensor in tensors.items()}
+        return self._record("checkpoints", path, label, format="torch-pt", arm=arm,
+                            seed=seed, selection=selection, config=config or {},
+                            datasets=list(datasets), tensors=schema)
 
 
 class BestCheckpoint:
@@ -116,10 +127,23 @@ class BestCheckpoint:
 
 
 def load_json_state(path):
-    """Load tensors only; the caller supplies the reviewed model architecture."""
+    """Load tensors only; the caller supplies the reviewed model architecture.
+
+    Reads legacy JSON state dicts and current .pt checkpoints, dispatching on
+    the file extension. Only tensors are returned either way.
+    """
     import torch
 
-    value = json.loads(Path(path).read_text())
+    path = Path(path)
+    if path.suffix == ".pt":
+        value = torch.load(path, map_location="cpu", weights_only=True)
+        if not isinstance(value, dict) or value.get("format") != "neural-lab-state-dict-pt-v1":
+            raise ValueError("Unsupported checkpoint format")
+        tensors = value.get("tensors")
+        if not isinstance(tensors, dict) or any(not isinstance(t, torch.Tensor) for t in tensors.values()):
+            raise ValueError("Checkpoint tensors must be a tensor mapping")
+        return dict(tensors)
+    value = json.loads(path.read_text())
     if value.get("format") != "neural-lab-state-dict-v1":
         raise ValueError("Unsupported checkpoint format")
     supported = {str(dtype).removeprefix("torch."): dtype for dtype in (
@@ -135,3 +159,8 @@ def load_json_state(path):
             raise ValueError("Checkpoint tensor shape does not match metadata")
         state[name] = result
     return state
+
+
+def load_state(path):
+    """Canonical alias for checkpoint loading across both formats."""
+    return load_json_state(path)

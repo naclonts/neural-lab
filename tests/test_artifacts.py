@@ -50,6 +50,9 @@ class ArtifactTests(unittest.TestCase):
             writer = ArtifactWriter(directory)
             entry = best.save(writer, "candidate-seed-5-best", arm="candidate", seed=5,
                               datasets=["datasets/synthetic-seed-5.npz"])
+            self.assertEqual(entry["format"], "torch-pt")
+            self.assertTrue(str(entry["path"]).endswith(".pt"))
+            self.assertEqual(entry["tensors"]["weight"], {"dtype": "float32", "shape": [3, 4]})
             saved = torch.nn.Linear(4, 3)
             saved.load_state_dict(load_json_state(Path(directory) / entry["path"]))
             self.assertTrue(torch.equal(saved(sample), expected))
@@ -57,6 +60,32 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(entry["selection"]["metric"], "training_cross_entropy")
             self.assertEqual(entry["selection"]["observations"], 2)
             self.assertIn("held-out data not used", entry["selection"]["scope"])
+
+    def test_legacy_json_state_dicts_remain_loadable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model = torch.nn.Linear(3, 2)
+            reference = model.weight.detach().clone()
+            legacy = {"format": "neural-lab-state-dict-v1", "tensors": {
+                "weight": {"dtype": "float32", "shape": [2, 3], "data": reference.tolist()}},
+                "arm": "a", "seed": 1, "selection": {}, "config": {}}
+            path = Path(directory) / "legacy.json"
+            path.write_text(json.dumps(legacy, allow_nan=False))
+            self.assertTrue(torch.equal(load_json_state(path)["weight"], reference))
+            self.assertEqual(load_json_state(path)["weight"].dtype, torch.float32)
+
+    def test_non_tensor_state_and_bad_pt_payload_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = ArtifactWriter(directory)
+            with self.assertRaises(ValueError):
+                writer.save_checkpoint("bad", {"w": [[1.0, 2.0]]}, arm="a", seed=1,
+                                       selection={"metric": "training_cross_entropy", "mode": "min",
+                                                  "value": 1.0, "step": 0, "observations": 1,
+                                                  "observed_steps": [0], "scope": "s"})
+            path = Path(directory) / "checkpoints" / "bad-payload.pt"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save({"format": "something-else"}, path)
+            with self.assertRaises(ValueError):
+                load_json_state(path)
 
     def test_non_numeric_datasets_and_non_finite_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
