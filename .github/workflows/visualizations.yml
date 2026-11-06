@@ -93,13 +93,14 @@ jobs:
           NEURAL_LAB_DOCKER_TESTS: "1"
         run: |
           # Surface failing tests as annotations (visible via API) plus a log tail.
-          set -o pipefail
-          python -m unittest discover -s tests -v 2>&1 | tee "${RUNNER_TEMP}/test-output.log"
-          status=${PIPESTATUS[0]}
+          python -m unittest discover -s tests -v > "${RUNNER_TEMP}/test-output.log" 2>&1
+          status=$?
+          tail -n 40 "${RUNNER_TEMP}/test-output.log"
           if [ "$status" -ne 0 ]; then
             grep -E "^(FAIL|ERROR):" "${RUNNER_TEMP}/test-output.log" | sort -u | head -25 \
               | sed 's/^/::error title=failing test::/'
-            echo '::error title=test log tail::'"$(tail -n 25 \"${RUNNER_TEMP}/test-output.log\" | tr '\n' '|' | cut -c1-3000)"
+            tail -c 3000 "${RUNNER_TEMP}/test-output.log" | tr '\n' '|' \
+              | sed 's/^/::error title=test log tail::/'
             exit "$status"
           fi
       - name: Generate example reports
