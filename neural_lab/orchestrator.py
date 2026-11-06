@@ -794,7 +794,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=("pi", "codex"),
                         default=os.environ.get("NEURAL_LAB_ORCH_BACKEND", "codex"))
-    parser.add_argument("--model", default=os.environ.get("NEURAL_LAB_ORCH_MODEL", "gpt-6.1-sol"))
+    parser.add_argument("--model")
     parser.add_argument("--repo", type=Path, default=Path("/repo"))
     parser.add_argument("--poll-seconds", type=int, default=300)
     parser.add_argument("--pi-budget-seconds", type=int,
@@ -803,6 +803,11 @@ def main(argv=None) -> int:
                         default=int(os.environ.get("NEURAL_LAB_PI_BUDGET_SESSIONS", "8")))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
+    if not args.model:
+        # Backend-aware default: the Codex catalog model differs from the pi
+        # provider-qualified model; NEURAL_LAB_ORCH_MODEL overrides either.
+        args.model = os.environ.get("NEURAL_LAB_ORCH_MODEL") or (
+            "anthropic/claude-sonnet-4.5" if args.backend == "pi" else "gpt-6.1-sol")
     if not args.model and args.backend == "codex":
         parser.error("Set a ChatGPT subscription-backed Codex model")
     if args.poll_seconds < 1:
