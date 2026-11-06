@@ -616,20 +616,65 @@ class PiSession:
         self.process.stderr.close()
 
 
+def resolve_pi_context_window(model: str) -> int | None:
+    """Resolve the model's context window once per session.
+
+    Precedence: the NEURAL_LAB_PI_CONTEXT_WINDOW env override (parsed as a
+    positive int; an invalid value is ignored with a logged warning), then the
+    pi model catalog at {PI_CODING_AGENT_DIR:-/pi}/models-store.json for the
+    provider-qualified model string (provider = text before the first "/",
+    model id = the rest). Any catalog failure (missing file, provider, entry,
+    or field) resolves to None instead of raising; pi 1.5.0 RPC never reports
+    a context window on the wire, so this catalog is the only window source.
+    """
+    override = os.environ.get("NEURAL_LAB_PI_CONTEXT_WINDOW")
+    if override is not None:
+        try:
+            value = int(override)
+        except ValueError:
+            value = None
+        if value is not None and value > 0:
+            return value
+        print(json.dumps({"orchestrator": "warning",
+                          "reason": "invalid NEURAL_LAB_PI_CONTEXT_WINDOW ignored",
+                          "value": override}), flush=True)
+    if not model or "/" not in model:
+        return None
+    provider, _, model_id = model.partition("/")
+    path = Path(os.environ.get("PI_CODING_AGENT_DIR", "/pi")) / "models-store.json"
+    try:
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+        entries = catalog[provider]["models"]
+        match = next(entry for entry in entries
+                     if isinstance(entry, dict) and entry.get("id") == model_id)
+        window = match.get("contextWindow")
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    return window if type(window) is int and window > 0 else None
+
+
 def pi_usage(message: dict) -> tuple[int | None, int | None]:
-    """Read the reported token usage and context window from an RPC event."""
+    """Read reported token usage and any event-provided context window.
+
+    The two fields are validated independently: pi RPC events carry usage
+    verbatim and (as of pi 1.5.0) never include contextWindow, so the window
+    side is usually None and the session must fall back to the resolved
+    catalog/override window.
+    """
     usage = message.get("usage") or {}
     used = usage.get("totalTokens")
     window = usage.get("contextWindow")
-    if type(used) is not int or used < 0 or type(window) is not int or window <= 0:
-        return None, None
-    return used, window
+    return (used if type(used) is int and used >= 0 else None,
+            window if type(window) is int and window > 0 else None)
 
 
 def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event | None = None,
                    max_session_seconds: int = 14400) -> dict:
     """Run one pi RPC turn, interrupting on missing context telemetry or limits."""
     session = PiSession(model)
+    # pi 1.5.0 RPC events never carry usage.contextWindow, so resolve the
+    # window once from the env override or the pi model catalog up front.
+    resolved_window = resolve_pi_context_window(model)
     stop = stop or threading.Event()
     try:
         old_handoff = previous_handoff(repo)
@@ -692,25 +737,35 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
             elif method in ("message_update", "message_end", "turn_end"):
                 observed_used, observed_window = pi_usage(message)
                 if observed_used is None:
+                    # Used tokens must come from the events themselves; a
+                    # resolved window can never substitute for them.
                     reason = reason or "pi context telemetry unavailable"
                 else:
-                    used_tokens, context_window = observed_used, observed_window
-                    # Throttle the fsync-rewritten handoff file: persist only on a
-                    # material token change or at most once per 30 seconds.
-                    material = (context_window != written_window
-                                or abs(used_tokens - (written_tokens or 0))
-                                >= max(1024, context_window // 100))
-                    if material or time.monotonic() - last_progress_write >= 30.0:
-                        handoff.update(last_tokens=used_tokens, model_context_window=context_window,
-                                       context_handoff_tokens=context_window * CONTEXT_HANDOFF_FRACTION,
-                                       updated_at=time.time())
-                        write_handoff(repo, handoff)
-                        written_tokens, written_window = used_tokens, context_window
-                        last_progress_write = time.monotonic()
-                    # A tie at exactly 60% divides to the same double as the
-                    # constant, so the strict > boundary stays exact.
-                    if used_tokens / context_window > CONTEXT_HANDOFF_FRACTION:
-                        reason = reason or CONTEXT_HANDOFF_REASON
+                    # Prefer the event's own window when a future pi version
+                    # reports one; otherwise use the resolved catalog/override
+                    # window. Abort only when neither side can supply a window.
+                    window = (observed_window if observed_window is not None
+                              else resolved_window)
+                    if type(window) is not int or window <= 0:
+                        reason = reason or "pi context telemetry unavailable"
+                    else:
+                        used_tokens, context_window = observed_used, window
+                        # Throttle the fsync-rewritten handoff file: persist only on a
+                        # material token change or at most once per 30 seconds.
+                        material = (context_window != written_window
+                                    or abs(used_tokens - (written_tokens or 0))
+                                    >= max(1024, context_window // 100))
+                        if material or time.monotonic() - last_progress_write >= 30.0:
+                            handoff.update(last_tokens=used_tokens, model_context_window=context_window,
+                                           context_handoff_tokens=context_window * CONTEXT_HANDOFF_FRACTION,
+                                           updated_at=time.time())
+                            write_handoff(repo, handoff)
+                            written_tokens, written_window = used_tokens, context_window
+                            last_progress_write = time.monotonic()
+                        # A tie at exactly 60% divides to the same double as the
+                        # constant, so the strict > boundary stays exact.
+                        if used_tokens / context_window > CONTEXT_HANDOFF_FRACTION:
+                            reason = reason or CONTEXT_HANDOFF_REASON
             elif method == "agent_settled":
                 verified = used_tokens is not None and context_window is not None
                 if reason == CONTEXT_HANDOFF_REASON:

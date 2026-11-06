@@ -1,6 +1,7 @@
 import json
 import io
 from collections import deque
+from contextlib import contextmanager, redirect_stdout
 import os
 from pathlib import Path
 import signal
@@ -14,7 +15,8 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_ok,
-                                     context_fraction, main, record_pi_budget, rpc_snapshot,
+                                     context_fraction, main, pi_usage, record_pi_budget,
+                                     resolve_pi_context_window, rpc_snapshot,
                                      run_pi_session, run_session)
 
 
@@ -497,6 +499,80 @@ class PiTransportTests(unittest.TestCase):
             self.assertEqual(state["sessions"], 1)
             self.assertEqual(state["active_seconds"], 5.0)
 
+    # --- pi context-window resolution helpers -------------------------------
+    # pi 1.5.0 RPC events never carry usage.contextWindow, so every fake session
+    # below emits realistic events WITHOUT that field and the window comes from
+    # a temp models-store.json catalog or the env override instead.
+
+    @staticmethod
+    def write_pi_catalog(root, model="test-provider/pi-model", window=1000):
+        provider, _, model_id = model.partition("/")
+        (Path(root) / "models-store.json").write_text(json.dumps(
+            {provider: {"models": [{"id": model_id, "contextWindow": window,
+                                    "maxTokens": window}]}}))
+
+    @contextmanager
+    def pi_window_env(self, catalog_root=None, override=None,
+                      model="test-provider/pi-model", window=1000):
+        """Pin the window-resolution env vars for one run_pi_session call."""
+        saved = {key: os.environ.pop(key, None)
+                 for key in ("PI_CODING_AGENT_DIR", "NEURAL_LAB_PI_CONTEXT_WINDOW")}
+        try:
+            if catalog_root is not None:
+                self.write_pi_catalog(catalog_root, model=model, window=window)
+                os.environ["PI_CODING_AGENT_DIR"] = str(catalog_root)
+            if override is not None:
+                os.environ["NEURAL_LAB_PI_CONTEXT_WINDOW"] = override
+            yield
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_pi_usage_reports_used_tokens_and_window_independently(self):
+        # Realistic pi 1.5.0 shape: usage without contextWindow.
+        self.assertEqual(pi_usage({"usage": {"totalTokens": 42}}), (42, None))
+        # Future-proof shape: the event carries its own window.
+        self.assertEqual(pi_usage({"usage": {"totalTokens": 42, "contextWindow": 1000}}),
+                         (42, 1000))
+        # Invalid fields degrade independently instead of rejecting both.
+        self.assertEqual(pi_usage({"usage": {"totalTokens": -1, "contextWindow": 1000}}),
+                         (None, 1000))
+        self.assertEqual(pi_usage({"usage": {"totalTokens": 42, "contextWindow": 0}}),
+                         (42, None))
+        self.assertEqual(pi_usage({"usage": {}}), (None, None))
+        self.assertEqual(pi_usage({}), (None, None))
+
+    def test_resolve_pi_context_window_reads_catalog_and_env_override(self):
+        with tempfile.TemporaryDirectory() as root:
+            model = "fireworks/accounts/fireworks/models/glm-5p3-flash"
+            with self.pi_window_env(root, model=model, window=1048573):
+                self.assertEqual(resolve_pi_context_window(model), 1048573)
+            # Missing catalog file, provider, entry, or field all resolve to None.
+            with self.pi_window_env(None):
+                self.assertIsNone(resolve_pi_context_window(model))
+            with self.pi_window_env(root):
+                self.assertIsNone(resolve_pi_context_window("fireworks/accounts/unknown"))
+                self.assertIsNone(resolve_pi_context_window("no-slash-model"))
+
+    def test_resolve_pi_context_window_env_override_wins_and_invalid_ignored(self):
+        with tempfile.TemporaryDirectory() as root:
+            model = "test-provider/pi-model"
+            self.write_pi_catalog(root, model=model, window=1000)
+            with self.pi_window_env(root, override="777"):
+                self.assertEqual(resolve_pi_context_window(model), 777)
+            # An invalid override is ignored (with a warning) and never crashes;
+            # the catalog value is used as the fallback.
+            stdout = io.StringIO()
+            with self.pi_window_env(root, override="not-a-number"), redirect_stdout(stdout):
+                self.assertEqual(resolve_pi_context_window(model), 1000)
+            self.assertIn("invalid NEURAL_LAB_PI_CONTEXT_WINDOW ignored", stdout.getvalue())
+            # A valid override needs no catalog at all.
+            with self.pi_window_env(None, override="5000"):
+                self.assertEqual(resolve_pi_context_window(model), 5000)
+
     def test_pi_budget_is_recorded_even_when_the_session_raises(self):
         with tempfile.TemporaryDirectory() as root:
             budget = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
@@ -538,8 +614,8 @@ class PiTransportTests(unittest.TestCase):
 
             def receive(self, timeout):
                 # Simulates a continuously streaming pi process that never starves.
-                return {"type": "message_update",
-                        "usage": {"totalTokens": 10, "contextWindow": 1000}}
+                # Realistic pi 1.5.0 wire shape: no contextWindow on the event.
+                return {"type": "message_update", "usage": {"totalTokens": 10}}
 
             def close(self):
                 pass
@@ -548,8 +624,10 @@ class PiTransportTests(unittest.TestCase):
         stop.set()
         fake = StreamingSession()
         with tempfile.TemporaryDirectory() as root:
-            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
-                outcome = run_pi_session("pi-model", Path(root), "test", stop=stop)
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test",
+                                         stop=stop)
         self.assertEqual(outcome["exit_code"], 1)
         self.assertEqual(outcome["reason"], "shutdown requested")
         self.assertIn("abort", [call[0] for call in fake.calls])
@@ -579,8 +657,9 @@ class PiTransportTests(unittest.TestCase):
 
         fake = AuthFailSession()
         with tempfile.TemporaryDirectory() as root:
-            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
-                outcome = run_pi_session("pi-model", Path(root), "test")
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
         self.assertEqual(outcome["exit_code"], 1)
         self.assertEqual(outcome["reason"],
                          "pi could not authenticate with the configured provider")
@@ -654,8 +733,9 @@ class PiTransportTests(unittest.TestCase):
             notes = Path(root) / ".neural-lab" / "notes"
             notes.mkdir(parents=True)
             (notes / "latest-session.json").write_text(json.dumps({"reason": "previous finding"}))
-            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
-                outcome = run_pi_session("pi-model", Path(root), "test prompt")
+            with self.pi_window_env(None), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test prompt")
             handoff = json.loads((Path(root) / ".neural-lab" / "notes" / "latest-session.json").read_text())
         self.assertEqual(outcome["exit_code"], 1)
         self.assertEqual(outcome["reason"], "pi context telemetry unavailable")
@@ -665,64 +745,15 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual(handoff["backend"], "pi")
         self.assertEqual(handoff["reason"], "pi context telemetry unavailable")
 
-    def test_run_pi_session_success_requires_settled_and_verified_usage(self):
-        def event(tokens, window=1000):
-            return {"type": "message_update", "usage": {"totalTokens": tokens, "contextWindow": window}}
-
-        class FakeSession:
-            def __init__(self, messages):
-                self.calls = []
-                self.messages = messages
-
-            def send(self, record_type, fields=None):
-                self.calls.append((record_type, fields))
-                return "neural-lab-1"
-
-            def notify(self, record_type, fields=None):
-                self.calls.append((record_type, fields))
-
-            def receive(self, timeout):
-                return self.messages.pop(0) if self.messages else None
-
-            def close(self):
-                pass
-
-        with tempfile.TemporaryDirectory() as root:
-            success_session = FakeSession([event(400), {"type": "agent_settled", "aborted": False}])
-            with patch("neural_lab.orchestrator.PiSession", return_value=success_session):
-                outcome = run_pi_session("pi-model", Path(root), "test")
-            self.assertEqual(outcome["exit_code"], 0)
-            self.assertEqual(outcome["reason"], "pi session settled")
-            self.assertTrue(outcome["context_window_verified"])
-            self.assertEqual(outcome["last_tokens"], 400)
-            self.assertEqual(outcome["model_context_window"], 1000)
-            self.assertEqual(success_session.calls[0][0], "prompt")
-            self.assertNotIn("abort", [call[0] for call in success_session.calls])
-
-            aborted_session = FakeSession([event(400), {"type": "agent_settled", "aborted": True}])
-            with patch("neural_lab.orchestrator.PiSession", return_value=aborted_session):
-                outcome = run_pi_session("pi-model", Path(root), "test")
-            self.assertEqual(outcome["exit_code"], 1)
-            # The agent aborted on its own; the controller only aborts on limits.
-            self.assertNotIn("abort", [call[0] for call in aborted_session.calls])
-
-            unverified_session = FakeSession([{"type": "agent_settled", "aborted": False}])
-            with patch("neural_lab.orchestrator.PiSession", return_value=unverified_session):
-                outcome = run_pi_session("pi-model", Path(root), "test")
-
-        # A settled session without any usage event is never a success, even when
-        # the agent reports a normal completion; there is nothing left to abort.
-        self.assertEqual(unverified_session.messages, [])
-        self.assertEqual(outcome["exit_code"], 1)
-        self.assertEqual(outcome["reason"], "pi session settled")
-        self.assertFalse(outcome["context_window_verified"])
-
-    def test_run_pi_session_context_handoff_aborts_above_60_percent(self):
+    def test_run_pi_session_aborts_when_window_is_unresolvable(self):
+        """Used tokens arrive but neither the event nor the catalog/override
+        supplies a window: the conservative abort must still fire."""
         class FakeSession:
             def __init__(self):
                 self.calls = []
                 self.messages = [
-                    {"type": "message_update", "usage": {"totalTokens": 601, "contextWindow": 1000}},
+                    # Realistic pi 1.5.0 shape: totalTokens but no contextWindow.
+                    {"type": "message_update", "usage": {"totalTokens": 123}},
                     {"type": "agent_settled", "aborted": True},
                 ]
 
@@ -741,8 +772,239 @@ class PiTransportTests(unittest.TestCase):
 
         fake = FakeSession()
         with tempfile.TemporaryDirectory() as root:
-            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
-                outcome = run_pi_session("pi-model", Path(root), "test")
+            with self.pi_window_env(None), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/missing-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], "pi context telemetry unavailable")
+        self.assertFalse(outcome["context_window_verified"])
+        self.assertIsNone(outcome["last_tokens"])
+        self.assertIsNone(outcome["model_context_window"])
+        self.assertIn("abort", [call[0] for call in fake.calls])
+
+    def test_run_pi_session_resolves_window_from_catalog_when_events_lack_it(self):
+        class FakeSession:
+            def __init__(self):
+                self.messages = [
+                    {"type": "message_update", "usage": {"totalTokens": 400}},
+                    {"type": "agent_settled", "aborted": False},
+                ]
+
+            def send(self, record_type, fields=None):
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                pass
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=FakeSession()):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertTrue(outcome["context_window_verified"])
+        self.assertEqual(outcome["last_tokens"], 400)
+        self.assertEqual(outcome["model_context_window"], 1000)
+        self.assertEqual(outcome["context_fraction"], 0.4)
+        self.assertAlmostEqual(outcome["context_handoff_tokens"], 600.0)
+
+    def test_run_pi_session_env_override_wins_over_catalog(self):
+        class FakeSession:
+            def __init__(self):
+                self.messages = [
+                    {"type": "message_update", "usage": {"totalTokens": 400}},
+                    {"type": "agent_settled", "aborted": False},
+                ]
+
+            def send(self, record_type, fields=None):
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                pass
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root, override="777"), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=FakeSession()):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(outcome["model_context_window"], 777)
+        self.assertAlmostEqual(outcome["context_handoff_tokens"], 777 * 0.6)
+
+    def test_run_pi_session_ignores_invalid_env_override(self):
+        """An invalid NEURAL_LAB_PI_CONTEXT_WINDOW must not crash the session;
+        the catalog value is used as the fallback window."""
+        class FakeSession:
+            def __init__(self):
+                self.messages = [
+                    {"type": "message_update", "usage": {"totalTokens": 400}},
+                    {"type": "agent_settled", "aborted": False},
+                ]
+
+            def send(self, record_type, fields=None):
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                pass
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root, override="not-a-number"), \
+                    redirect_stdout(stdout), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=FakeSession()):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertIn("invalid NEURAL_LAB_PI_CONTEXT_WINDOW ignored", stdout.getvalue())
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(outcome["model_context_window"], 1000)
+
+    def test_run_pi_session_prefers_event_window_when_present(self):
+        """Future-proofing: an event-provided window beats the resolved one."""
+        class FakeSession:
+            def __init__(self):
+                self.messages = [
+                    {"type": "message_update",
+                     "usage": {"totalTokens": 400, "contextWindow": 2000}},
+                    {"type": "agent_settled", "aborted": False},
+                ]
+
+            def send(self, record_type, fields=None):
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                pass
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root, override="777"), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=FakeSession()):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(outcome["model_context_window"], 2000)
+
+    def test_run_pi_session_success_requires_settled_and_verified_usage(self):
+        class FakeSession:
+            def __init__(self, messages):
+                self.calls = []
+                self.messages = messages
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        def event_from_catalog(tokens):
+            # Realistic pi 1.5.0 wire shape: no contextWindow on the event.
+            return {"type": "message_update", "usage": {"totalTokens": tokens}}
+
+        def event_with_window(tokens, window=1000):
+            # Future-proof shape: the event carries its own window.
+            return {"type": "message_update",
+                    "usage": {"totalTokens": tokens, "contextWindow": window}}
+
+        with tempfile.TemporaryDirectory() as root:
+            success_session = FakeSession([event_from_catalog(400),
+                                           {"type": "agent_settled", "aborted": False}])
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=success_session):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+            self.assertEqual(outcome["exit_code"], 0)
+            self.assertEqual(outcome["reason"], "pi session settled")
+            self.assertTrue(outcome["context_window_verified"])
+            self.assertEqual(outcome["last_tokens"], 400)
+            self.assertEqual(outcome["model_context_window"], 1000)
+            self.assertAlmostEqual(outcome["context_handoff_tokens"], 600.0)
+            self.assertEqual(success_session.calls[0][0], "prompt")
+            self.assertNotIn("abort", [call[0] for call in success_session.calls])
+
+            aborted_session = FakeSession([event_from_catalog(400),
+                                           {"type": "agent_settled", "aborted": True}])
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=aborted_session):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+            self.assertEqual(outcome["exit_code"], 1)
+            # The agent aborted on its own; the controller only aborts on limits.
+            self.assertNotIn("abort", [call[0] for call in aborted_session.calls])
+
+            unverified_session = FakeSession([{"type": "agent_settled", "aborted": False}])
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=unverified_session):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+
+            # Same scenario over the future-proof wire shape (event-provided
+            # window, no catalog): verification must work identically.
+            windowed_session = FakeSession([event_with_window(400),
+                                            {"type": "agent_settled", "aborted": False}])
+            with self.pi_window_env(None), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=windowed_session):
+                windowed_outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+            self.assertEqual(windowed_outcome["exit_code"], 0)
+            self.assertTrue(windowed_outcome["context_window_verified"])
+            self.assertEqual(windowed_outcome["model_context_window"], 1000)
+
+        # A settled session without any usage event is never a success, even when
+        # the agent reports a normal completion; there is nothing left to abort.
+        self.assertEqual(unverified_session.messages, [])
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], "pi session settled")
+        self.assertFalse(outcome["context_window_verified"])
+
+    def test_run_pi_session_context_handoff_aborts_above_60_percent(self):
+        class FakeSession:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    # Realistic pi 1.5.0 shape: the window comes from the catalog.
+                    {"type": "message_update", "usage": {"totalTokens": 601}},
+                    {"type": "agent_settled", "aborted": True},
+                ]
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        fake = FakeSession()
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
             budget_state = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
             self.assertFalse(budget_state.exists())  # budget is recorded by main(), not the session
         self.assertEqual(outcome["exit_code"], 0)
