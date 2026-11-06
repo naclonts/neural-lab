@@ -1,6 +1,6 @@
 # Agent loop
 
-The first supervisor supports three planners:
+The first supervisor supports these planners:
 
 - demo: a deterministic MLP architecture search on a fixed synthetic task, with
   held-out evaluation against a linear baseline.
@@ -8,6 +8,9 @@ The first supervisor supports three planners:
   See [subscription setup](codex.md); no API key is needed.
 - api: an OpenAI-compatible Chat Completions endpoint proposes hypotheses and
   standalone training scripts using recent experiment outcomes.
+- pi: the pi coding agent with API-key billing in a separate planning container.
+  The planner is pluggable; see [pi setup](pi.md) for the key, budget, and
+  orchestrator details. No subscription is needed.
 
 The host supervisor uses Python 3.10+ and stdlib only. PyTorch runs in the worker.
 The API planner is a one-request experiment planner, not an interactive coding

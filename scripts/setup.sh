@@ -13,9 +13,10 @@ fi
 umask 077
 mkdir -p experiments
 if [ ! -e .env ]; then
-  printf 'LAB_UID=%s\nLAB_GID=%s\nLAB_REPO_DIR=%s\nDOCKER_GID=%s\nNEURAL_LAB_CODEX_HOME=%s\n' \
+  printf 'LAB_UID=%s\nLAB_GID=%s\nLAB_REPO_DIR=%s\nDOCKER_GID=%s\nNEURAL_LAB_CODEX_HOME=%s\nNEURAL_LAB_PI_HOME=%s\n' \
     "$(id -u)" "$(id -g)" "$PWD" "$(stat -c %g /var/run/docker.sock)" \
-    "${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}" > .env
+    "${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}" \
+    "${NEURAL_LAB_PI_HOME:-$HOME/.local/share/neural-lab/pi}" > .env
 else
   echo "Keeping existing .env; check LAB_UID and LAB_GID match your regular user."
   if ! grep -q '^LAB_REPO_DIR=' .env; then printf 'LAB_REPO_DIR=%s\n' "$PWD" >> .env; fi
@@ -23,12 +24,18 @@ else
   if ! grep -q '^NEURAL_LAB_CODEX_HOME=' .env; then
     printf 'NEURAL_LAB_CODEX_HOME=%s\n' "${NEURAL_LAB_CODEX_HOME:-$HOME/.local/share/neural-lab/codex}" >> .env
   fi
+  if ! grep -q '^NEURAL_LAB_PI_HOME=' .env; then
+    printf 'NEURAL_LAB_PI_HOME=%s\n' "${NEURAL_LAB_PI_HOME:-$HOME/.local/share/neural-lab/pi}" >> .env
+  fi
 fi
 mkdir -p .neural-lab/notes
 # Let Compose resolve .env itself; never execute shell code from that file.
 auth_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["orchestrator"]["volumes"] if v["target"] == "/codex"))')"
 mkdir -p -- "$auth_dir"
 chmod 700 -- "$auth_dir"
+pi_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["pi-orchestrator"]["volumes"] if v["target"] == "/pi"))')"
+mkdir -p -- "$pi_dir"
+chmod 700 -- "$pi_dir"
 docker compose config --quiet
 docker compose -f compose.research.yaml config --quiet
 echo "Configuration is valid. Start research with: bash scripts/research.sh start"

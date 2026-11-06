@@ -1,9 +1,11 @@
 # Headless research stack
 
-The stack runs an independent GPU job worker and a Codex research orchestrator.
+The stack runs an independent GPU job worker and a research orchestrator (Codex by
+default, or the pi coding agent with API-key billing — see the
+[pi backend](#pi-backend) section below).
 The orchestrator researches architectures, delegates to subagents, implements
-training scripts, and queues them. Queued jobs make no OpenAI calls and continue
-while the orchestrator waits for subscription capacity.
+training scripts, and queues them. Queued jobs make no model-provider calls and
+continue while the orchestrator waits for capacity.
 
 The active objective is [AI-assisted logical verification](research-direction.md):
 claim-to-query translation, premise retrieval, and neural-guided proof search with
@@ -166,6 +168,28 @@ ChatGPT subscription allowances and purchased ChatGPT credits are controlled by
 the account. This project does not buy credits, redeem reset credits, or implement
 an API fallback. Keep account credit settings consistent with subscription-only
 use. [App-server account and quota methods](https://learn.chatgpt.com/docs/app-server).
+
+## pi backend
+
+`bash scripts/research.sh start-pi` runs the same stack with the pi coding agent
+over its RPC protocol: `python3 -m neural_lab.orchestrator --backend pi` in the
+`neural-lab-pi` image, with the previous private handoff prepended to each session
+and handoff notes written with `"backend": "pi"`.
+
+- The default model is `NEURAL_LAB_ORCH_MODEL` (`anthropic/claude-sonnet-4.5` in
+  the pi service); `--backend` defaults to `NEURAL_LAB_ORCH_BACKEND`, else `codex`.
+- Context handoff interrupts a turn strictly above **60% of the reported context
+  window**, exactly like the Codex controller; a session that settles without
+  verified usage telemetry is aborted conservatively.
+- Sessions are pay-per-token API calls with no subscription quota pause. Instead,
+  a local budget gate in `.neural-lab/notes/pi-budget.json` pauses new sessions at
+  `NEURAL_LAB_PI_BUDGET_SECONDS` (default 14400) or `NEURAL_LAB_PI_BUDGET_SESSIONS`
+  (default 8) per rolling 24-hour window; missing state pauses.
+- The dedicated pi auth directory is mounted only into the pi-orchestrator and
+  doctor containers; no API key appears in the container environment.
+
+See [pi planner and orchestrator setup](pi.md) for key configuration, billing
+warnings, and the full security notes.
 
 ## Container permissions
 

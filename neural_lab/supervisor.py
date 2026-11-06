@@ -17,6 +17,7 @@ import uuid
 
 from neural_lab.planner import APIPlanner, DemoPlanner, PlannerError
 from neural_lab.codex_planner import CodexPlanner
+from neural_lab.pi_planner import PiPlanner
 from neural_lab.runner import CleanupError, DockerRunner
 from neural_lab.manage import LowDiskSpace, check_readiness, require_disk_space
 
@@ -154,9 +155,10 @@ def experiment_step(journal, planner, runner, stop, *, max_attempts, budget_seco
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=Path(".neural-lab"))
-    parser.add_argument("--planner", choices=("demo", "api", "codex"), default="demo")
+    parser.add_argument("--planner", choices=("demo", "api", "codex", "pi"), default="demo")
     parser.add_argument("--model")
     parser.add_argument("--codex-home", type=Path)
+    parser.add_argument("--pi-home", type=Path)
     parser.add_argument("--planning-timeout-seconds", type=int, default=600)
     parser.add_argument("--api-url", default="https://api.openai.com/v1/chat/completions")
     parser.add_argument("--api-key-env", default="NEURAL_LAB_API_KEY")
@@ -184,6 +186,8 @@ def main(argv=None):
         parser.error("--min-free-gb must be finite and at least 1")
     if args.planner == "api" and not args.model:
         parser.error("--model is required for the API planner")
+    if args.planner == "pi" and not args.model:
+        parser.error("--model is required for the pi planner")
 
     stop = threading.Event()
     def shutdown(signum, frame):
@@ -201,7 +205,9 @@ def main(argv=None):
             journal.recover()
             checks = check_readiness(
                 state_dir=args.state_dir, image=args.image, planner=args.planner,
-                auth_dir=args.codex_home, gpu=None if args.cpu else args.gpu,
+                auth_dir=args.codex_home if args.planner != "pi" else None,
+                pi_auth_dir=args.pi_home if args.planner == "pi" else None,
+                gpu=None if args.cpu else args.gpu,
                 minimum_gb=args.min_free_gb,
             )
             if not all(item["ok"] for item in checks):
@@ -212,6 +218,12 @@ def main(argv=None):
             elif args.planner == "codex":
                 planner = CodexPlanner(
                     journal.owner, auth_dir=args.codex_home, model=args.model,
+                    runtime_seconds=args.timeout_seconds, timeout=args.planning_timeout_seconds,
+                    stop=stop,
+                )
+            elif args.planner == "pi":
+                planner = PiPlanner(
+                    journal.owner, auth_dir=args.pi_home, model=args.model,
                     runtime_seconds=args.timeout_seconds, timeout=args.planning_timeout_seconds,
                     stop=stop,
                 )

@@ -1,5 +1,9 @@
 # Use Codex with your ChatGPT subscription
 
+> **Legacy note:** the Codex path remains supported and is the subscription-billed
+> default, but new work focuses on the equivalent pi backend with API-key billing.
+> See [pi planner and orchestrator setup](pi.md) for the maintained alternative.
+
 For the ongoing orchestrator with research subagents, live 250k context handoff,
 subscription quota pausing, and an independent GPU queue, use the
 [headless research stack](orchestrator.md). The planner described below is the

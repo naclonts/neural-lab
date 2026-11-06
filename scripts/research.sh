@@ -23,17 +23,31 @@ case "$operation" in
     "${compose[@]}" up -d --build worker orchestrator
     "${compose[@]}" ps
     ;;
+  start-pi)
+    bash scripts/setup.sh
+    # The pi backend uses pay-per-token API billing; require a working key.
+    bash scripts/pi-auth.sh status
+    python3 -m neural_lab.manage doctor --planner pi
+    "${compose[@]}" up -d --build worker pi-orchestrator
+    "${compose[@]}" ps
+    ;;
   status)
+    service="${2:-orchestrator}"
     python3 -m neural_lab.queue status
     "${compose[@]}" ps
-    "${compose[@]}" logs --tail=15 orchestrator worker
+    "${compose[@]}" logs --tail=15 "$service" worker
     ;;
-  logs) "${compose[@]}" logs --follow --tail=100 orchestrator worker ;;
+  logs)
+    service="${2:-orchestrator}"
+    "${compose[@]}" logs --follow --tail=100 "$service" worker
+    ;;
   stop) "${compose[@]}" down ;;
-  pause-research) "${compose[@]}" stop orchestrator ;;
-  resume-research) "${compose[@]}" up -d orchestrator ;;
+  pause-research) "${compose[@]}" stop "${2:-orchestrator}" ;;
+  resume-research) "${compose[@]}" up -d "${2:-orchestrator}" ;;
   *)
-    echo 'Usage: bash scripts/research.sh [start|status|logs|stop|pause-research|resume-research]' >&2
+    echo 'Usage: bash scripts/research.sh [start|start-pi|status|logs|stop|pause-research|resume-research]' >&2
+    echo '  status, logs, pause-research, and resume-research accept an optional' >&2
+    echo '  service name (for example: logs pi-orchestrator); default orchestrator.' >&2
     exit 2
     ;;
 esac

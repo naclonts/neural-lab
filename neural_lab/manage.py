@@ -16,6 +16,7 @@ import threading
 import uuid
 
 from neural_lab.codex_planner import CODEX_IMAGE
+from neural_lab.pi_planner import PI_IMAGE
 from neural_lab.runner import DockerRunner
 
 
@@ -80,7 +81,7 @@ def _command(*args):
 
 
 def check_readiness(*, state_dir=".neural-lab", image=WORKER_IMAGE, planner="codex",
-                    auth_dir=None, gpu="0", minimum_gb=10, gpu_test=False):
+                    auth_dir=None, pi_auth_dir=None, gpu="0", minimum_gb=10, gpu_test=False):
     checks = []
     def check(name, action, fix):
         try:
@@ -167,6 +168,41 @@ def check_readiness(*, state_dir=".neural-lab", image=WORKER_IMAGE, planner="cod
                     DockerRunner._docker("rm", "-f", name)
             check("codex_login", login, "Sign in with ChatGPT: bash scripts/codex-login.sh")
 
+    if planner == "pi":
+        home = Path(pi_auth_dir or os.environ.get("NEURAL_LAB_PI_HOME")
+                    or Path.home() / ".local/share/neural-lab/pi").resolve()
+        image_ok = check("pi_image", lambda: _command(
+            "docker", "image", "inspect", "--format", "{{.Id}}", PI_IMAGE),
+            "Build the pi image with: bash scripts/pi-auth.sh")
+        if image_ok:
+            def pi_auth():
+                if not home.is_dir() or "," in str(home) or "\n" in str(home):
+                    raise RuntimeError("Missing or invalid dedicated auth directory")
+                name = "neural-lab-doctor-" + uuid.uuid4().hex
+                try:
+                    DockerRunner._docker(
+                        "create", "--pull", "never", "--name", name,
+                        "--label", "neural-lab.role=doctor",
+                        "--user", f"{os.getuid()}:{os.getgid()}",
+                        "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+                        "--memory", "1g", "--memory-swap", "1g", "--cpus", "1", "--pids-limit", "128",
+                        "--tmpfs", "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+                        "--mount", f"type=bind,src={home},dst=/pi",
+                        "--env", "PI_CODING_AGENT_DIR=/pi",
+                        PI_IMAGE, "--print", "--offline", "--no-session",
+                        "-ne", "-ns", "-np", "-nc", "reply ok",
+                    )
+                    DockerRunner._docker("start", "-a", name)
+                    # docker start -a does not reliably propagate the container's
+                    # exit code, so inspect it explicitly.
+                    state = DockerRunner._docker("inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", name)
+                    if state != "false 0":
+                        raise RuntimeError("pi API-key auth unavailable")
+                    return "pi API-key auth is available; provider quota is not checked"
+                finally:
+                    DockerRunner._docker("rm", "-f", name)
+            check("pi_auth", pi_auth, "Configure the pi API key: bash scripts/pi-auth.sh set-key")
+
     if gpu_test and gpu is not None and all(item["ok"] for item in checks):
         def cuda():
             with tempfile.TemporaryDirectory(prefix="neural-lab-gpu-check-") as root:
@@ -201,8 +237,9 @@ def main(argv=None):
     status.add_argument("--limit", type=int, default=5)
     doctor = commands.add_parser("doctor", help="Check local readiness without consuming planner attempts")
     doctor.add_argument("--state-dir", type=Path, default=Path(".neural-lab"))
-    doctor.add_argument("--planner", choices=("codex", "demo", "api"), default="codex")
+    doctor.add_argument("--planner", choices=("codex", "demo", "api", "pi"), default="codex")
     doctor.add_argument("--codex-home", type=Path)
+    doctor.add_argument("--pi-home", type=Path)
     doctor.add_argument("--image", default=WORKER_IMAGE)
     doctor.add_argument("--gpu", default="0")
     doctor.add_argument("--cpu", action="store_true")
@@ -220,7 +257,9 @@ def main(argv=None):
         parser.error("--gpu-test cannot be combined with --cpu")
     checks = check_readiness(
         state_dir=args.state_dir, image=args.image, planner=args.planner,
-        auth_dir=args.codex_home, gpu=None if args.cpu else args.gpu,
+        auth_dir=args.codex_home if args.planner != "pi" else None,
+        pi_auth_dir=args.pi_home if args.planner == "pi" else None,
+        gpu=None if args.cpu else args.gpu,
         minimum_gb=args.min_free_gb, gpu_test=args.gpu_test,
     )
     print(json.dumps({"ready": all(item["ok"] for item in checks), "checks": checks}, indent=2))
