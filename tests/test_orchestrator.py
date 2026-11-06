@@ -1,16 +1,20 @@
 import json
 import io
+from collections import deque
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
-from neural_lab.orchestrator import AppServer, capacity_ok, context_fraction, main, rpc_snapshot, run_session
+from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_ok,
+                                     context_fraction, main, rpc_snapshot, run_pi_session,
+                                     run_session)
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -366,6 +370,200 @@ class RealProtocolTests(unittest.TestCase):
                     # No turn/start: this check never invokes a model or uses account capacity.
                 finally:
                     server.close()
+
+
+class PiTransportTests(unittest.TestCase):
+    def test_budget_is_conservative_when_state_is_missing_or_unreadable(self):
+        with tempfile.TemporaryDirectory() as root:
+            permitted, reason = budget_ok(Path(root) / "missing.json", max_seconds=100, max_sessions=2)
+            self.assertFalse(permitted)
+            self.assertEqual(reason, "pi usage budget state unavailable")
+            path = Path(root) / "pi-budget.json"
+            path.write_text("{not json")
+            self.assertEqual(budget_ok(path, max_seconds=100, max_sessions=2),
+                             (False, "pi usage budget state unavailable"))
+            path.write_text(json.dumps({"sessions": "2", "active_seconds": 0}))
+            self.assertFalse(budget_ok(path, max_seconds=100, max_sessions=2)[0])
+
+    def test_budget_blocks_at_session_and_second_limits(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "pi-budget.json"
+            path.write_text(json.dumps({"sessions": 1, "active_seconds": 10, "window_start": 1}))
+            permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
+            self.assertTrue(permitted)
+            self.assertIn("1/2", reason)
+            path.write_text(json.dumps({"sessions": 2, "active_seconds": 10, "window_start": 1}))
+            permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
+            self.assertFalse(permitted)
+            self.assertIn("session budget", reason)
+            path.write_text(json.dumps({"sessions": 1, "active_seconds": 100, "window_start": 1}))
+            permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
+            self.assertFalse(permitted)
+            self.assertIn("active-second budget", reason)
+
+    def test_pi_session_spawns_rpc_process_group_and_closes_with_signals(self):
+        process = Mock()
+        process.pid = 4321
+        process.stderr = io.BytesIO(b"")
+        with patch("neural_lab.orchestrator.subprocess.Popen", return_value=process) as popen:
+            session = PiSession("pi-model")
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0][:4], ["pi", "--mode", "rpc", "--no-session"])
+        self.assertEqual(args[0][-2:], ["--model", "pi-model"])
+        self.assertTrue(kwargs.get("start_new_session"))
+        self.assertIsNone(kwargs.get("env"))
+        with patch("neural_lab.orchestrator.os.killpg") as killpg:
+            session.close()
+        process.stdin.close.assert_called_once()
+        self.assertEqual(killpg.call_args.args[1], signal.SIGTERM)
+
+    def test_pi_session_diagnostics_keep_only_fixed_safe_categories(self):
+        session = PiSession.__new__(PiSession)
+        session.auth_error = None
+        session.process = SimpleNamespace(stderr=io.BytesIO(
+            b'unrelated private-sentinel\n'
+            b'error: unauthorized private-sentinel\n'
+        ))
+        session._read_diagnostics()
+        self.assertEqual(session.auth_error, "pi could not authenticate with the configured provider")
+
+    def test_pi_session_receive_tolerates_unparseable_records(self):
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b'not-json\n{"type":"agent_start"}\n')
+        session = PiSession.__new__(PiSession)
+        session.buffer = bytearray()
+        session.pending = deque()
+        session.process = SimpleNamespace(stdout=os.fdopen(read_fd, "rb"))
+        try:
+            message = session.receive(1)
+            self.assertEqual(message, {"type": "agent_start"})
+            self.assertIsNone(session.receive(0.01))
+        finally:
+            session.process.stdout.close()
+            os.close(write_fd)
+
+    def test_run_pi_session_aborts_when_context_telemetry_is_missing(self):
+        class FakeSession:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    {"type": "message_update", "usage": {}},
+                    {"type": "agent_settled", "aborted": True},
+                ]
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        fake = FakeSession()
+        with tempfile.TemporaryDirectory() as root:
+            notes = Path(root) / ".neural-lab" / "notes"
+            notes.mkdir(parents=True)
+            (notes / "latest-session.json").write_text(json.dumps({"reason": "previous finding"}))
+            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("pi-model", Path(root), "test prompt")
+            handoff = json.loads((Path(root) / ".neural-lab" / "notes" / "latest-session.json").read_text())
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], "pi context telemetry unavailable")
+        self.assertFalse(outcome["context_window_verified"])
+        self.assertIn("abort", [call[0] for call in fake.calls])
+        self.assertIn("Previous session handoff", fake.calls[0][1]["message"])
+        self.assertEqual(handoff["backend"], "pi")
+        self.assertEqual(handoff["reason"], "pi context telemetry unavailable")
+
+    def test_run_pi_session_success_requires_settled_and_verified_usage(self):
+        def event(tokens, window=1000):
+            return {"type": "message_update", "usage": {"totalTokens": tokens, "contextWindow": window}}
+
+        class FakeSession:
+            def __init__(self, messages):
+                self.calls = []
+                self.messages = messages
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as root:
+            success_session = FakeSession([event(400), {"type": "agent_settled", "aborted": False}])
+            with patch("neural_lab.orchestrator.PiSession", return_value=success_session):
+                outcome = run_pi_session("pi-model", Path(root), "test")
+            self.assertEqual(outcome["exit_code"], 0)
+            self.assertEqual(outcome["reason"], "pi session settled")
+            self.assertTrue(outcome["context_window_verified"])
+            self.assertEqual(outcome["last_tokens"], 400)
+            self.assertEqual(outcome["model_context_window"], 1000)
+            self.assertEqual(success_session.calls[0][0], "prompt")
+            self.assertNotIn("abort", [call[0] for call in success_session.calls])
+
+            aborted_session = FakeSession([event(400), {"type": "agent_settled", "aborted": True}])
+            with patch("neural_lab.orchestrator.PiSession", return_value=aborted_session):
+                outcome = run_pi_session("pi-model", Path(root), "test")
+            self.assertEqual(outcome["exit_code"], 1)
+            # The agent aborted on its own; the controller only aborts on limits.
+            self.assertNotIn("abort", [call[0] for call in aborted_session.calls])
+
+            unverified_session = FakeSession([{"type": "agent_settled", "aborted": False}])
+            with patch("neural_lab.orchestrator.PiSession", return_value=unverified_session):
+                outcome = run_pi_session("pi-model", Path(root), "test")
+
+        # A settled session without any usage event is never a success, even when
+        # the agent reports a normal completion; there is nothing left to abort.
+        self.assertEqual(unverified_session.messages, [])
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], "pi session settled")
+        self.assertFalse(outcome["context_window_verified"])
+
+    def test_run_pi_session_context_handoff_aborts_above_60_percent(self):
+        class FakeSession:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    {"type": "message_update", "usage": {"totalTokens": 601, "contextWindow": 1000}},
+                    {"type": "agent_settled", "aborted": True},
+                ]
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        fake = FakeSession()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("pi-model", Path(root), "test")
+            budget_state = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
+            self.assertFalse(budget_state.exists())  # budget is recorded by main(), not the session
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(outcome["reason"], "context exceeded 60% of reported window")
+        self.assertIn("abort", [call[0] for call in fake.calls])
+        self.assertEqual(outcome["context_fraction"], 0.601)
 
 
 if __name__ == "__main__":

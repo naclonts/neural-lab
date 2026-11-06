@@ -80,3 +80,47 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  pi-orchestrator:
+    image: neural-lab-pi:${PI_VERSION:-1.5.0}
+    build:
+      context: .
+      dockerfile: docker/pi.Dockerfile
+      args:
+        PI_VERSION: ${PI_VERSION:-1.5.0}
+    user: "0:0"
+    entrypoint: ["/usr/local/bin/research-entrypoint"]
+    command: ["python3", "-m", "neural_lab.orchestrator", "--backend", "pi"]
+    working_dir: /repo
+    init: true
+    restart: unless-stopped
+    # Writable container filesystem and sudo permit package installation.
+    # Docker namespace isolation remains the host boundary.
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 4
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=1g,mode=1777"]
+    volumes:
+      - type: bind
+        source: ${LAB_REPO_DIR}
+        target: /repo
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${NEURAL_LAB_PI_HOME:?Set dedicated pi auth path}
+        target: /pi
+        bind:
+          create_host_path: false
+    environment:
+      LAB_UID: ${LAB_UID:?Run setup}
+      LAB_GID: ${LAB_GID:?Run setup}
+      PI_CODING_AGENT_DIR: /pi
+      PYTHONDONTWRITEBYTECODE: "1"
+      NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-anthropic/claude-sonnet-4.5}
+      NEURAL_LAB_PI_BUDGET_SECONDS: ${NEURAL_LAB_PI_BUDGET_SECONDS:-14400}
+      NEURAL_LAB_PI_BUDGET_SESSIONS: ${NEURAL_LAB_PI_BUDGET_SESSIONS:-8}
+      PI_PROVIDER: ${PI_PROVIDER:-anthropic}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

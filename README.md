@@ -86,6 +86,22 @@ python3 -m neural_lab.supervisor --planner codex --once
 See [Codex subscription setup and limits](docs/codex.md). GPU workers never receive
 the Codex login. Codex usage is subject to your account's allowance and credits.
 
+### pi planner (API-key billing)
+
+The same loop can run with the [pi coding agent](docs/pi.md) under pay-per-token
+API billing, as both a planner and a headless RPC orchestrator with a local
+budget gate:
+
+```bash
+printf 'YOUR_API_KEY' | bash scripts/pi-auth.sh set-key
+python3 -m neural_lab.supervisor --planner pi --model anthropic/claude-sonnet-4.5 --once
+bash scripts/research.sh start-pi
+```
+
+See [pi planner and orchestrator setup](docs/pi.md) for billing, budget, and
+security details. The Codex sections of this README are legacy but maintained:
+they remain the subscription-billed default.
+
 Or run one synthetic research experiment without an account or API key:
 
 ```bash

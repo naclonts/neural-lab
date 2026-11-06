@@ -18,6 +18,14 @@ from neural_lab.research_direction import RESEARCH_DIRECTION
 
 CONTEXT_HANDOFF_REASON = "context exceeded 60% of reported window"
 
+PI_ADDENDUM = """
+
+Backend note: this orchestrator session is driven through the pi coding agent
+over its RPC protocol (pi --mode rpc). Where the instructions above reference
+Codex subagents, use your pi subagents and extensions instead and never invoke
+Codex itself. All queueing, verification, provenance, and handoff requirements
+are unchanged."""
+
 PROMPT = """You are the neural-lab research orchestrator. Work in /repo. Use Codex
 subagents for independent literature research, experiment planning, implementation,
 and independent review. Delegate those tasks rather than doing all work yourself.
@@ -498,17 +506,267 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
         server.close()
 
 
+class PiSession:
+    """Small buffered JSON-line transport for the pi RPC backend."""
+
+    def __init__(self, model=None):
+        args = ["pi", "--mode", "rpc", "--no-session"]
+        if model:
+            args.extend(["--model", model])
+        self.process = subprocess.Popen(
+            args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        self.buffer = bytearray()
+        self.pending = deque()
+        self.sequence = 0
+        self.auth_error = None
+        self.stderr_reader = threading.Thread(target=self._read_diagnostics, daemon=True)
+        self.stderr_reader.start()
+
+    def _read_diagnostics(self):
+        """Keep only fixed diagnostic categories, never raw CLI logs or secrets."""
+        while chunk := self.process.stderr.readline(8192):
+            lowered = chunk.lower()
+            if b"unauthorized" in lowered or b"api key" in lowered:
+                self.auth_error = "pi could not authenticate with the configured provider"
+
+    def send(self, record_type: str, fields: dict | None = None) -> str:
+        self.sequence += 1
+        request_id = f"neural-lab-{self.sequence}"
+        record = {"id": request_id, "type": record_type, **(fields or {})}
+        self.process.stdin.write((json.dumps(record) + "\n").encode())
+        self.process.stdin.flush()
+        return request_id
+
+    def notify(self, record_type: str, fields: dict | None = None):
+        record = {"type": record_type, **(fields or {})}
+        self.process.stdin.write((json.dumps(record) + "\n").encode())
+        self.process.stdin.flush()
+
+    def receive(self, timeout: float) -> dict | None:
+        if self.pending:
+            return self.pending.popleft()
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready, _, _ = select.select([self.process.stdout], [], [], remaining)
+            if not ready:
+                return None
+            chunk = os.read(self.process.stdout.fileno(), 65536)
+            if not chunk:
+                raise RuntimeError("pi RPC process closed unexpectedly")
+            self.buffer.extend(chunk)
+            while b"\n" in self.buffer:
+                line, _, rest = self.buffer.partition(b"\n")
+                self.buffer[:] = rest
+                try:
+                    value = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    self.pending.append(value)
+            if self.pending:
+                return self.pending.popleft()
+
+    def request(self, record_type: str, fields: dict | None = None, timeout: float = 30) -> dict:
+        request_id = self.send(record_type, fields)
+        deadline = time.monotonic() + timeout
+        deferred = []
+        try:
+            while time.monotonic() < deadline:
+                message = self.receive(max(0.001, deadline - time.monotonic()))
+                if message is None:
+                    break
+                if message.get("type") == "response" and message.get("id") == request_id:
+                    if not message.get("success"):
+                        raise RuntimeError(f"pi {record_type} command failed")
+                    return message.get("data") or {}
+                deferred.append(message)
+            raise RuntimeError(f"pi {record_type} command timed out")
+        finally:
+            self.pending.extendleft(reversed(deferred))
+
+    def close(self):
+        try:
+            self.process.stdin.close()
+        except BrokenPipeError:
+            pass
+        try:
+            os.killpg(self.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(self.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.process.wait()
+        self.process.stdout.close()
+        self.stderr_reader.join(timeout=1)
+        self.process.stderr.close()
+
+
+def pi_usage(message: dict) -> tuple[int | None, int | None]:
+    """Read the reported token usage and context window from an RPC event."""
+    usage = message.get("usage") or {}
+    used = usage.get("totalTokens")
+    window = usage.get("contextWindow")
+    if type(used) is not int or used < 0 or type(window) is not int or window <= 0:
+        return None, None
+    return used, window
+
+
+def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event | None = None,
+                   max_session_seconds: int = 14400) -> dict:
+    """Run one pi RPC turn, interrupting on missing context telemetry or limits."""
+    session = PiSession(model)
+    stop = stop or threading.Event()
+    try:
+        old_handoff = previous_handoff(repo)
+        if old_handoff:
+            prompt += "\nPrevious session handoff (private local state):\n" + old_handoff
+        deadline = time.monotonic() + max_session_seconds
+        handoff = {"backend": "pi", "model": model, "reason": "running", "last_tokens": None,
+                   "model_context_window": None, "context_handoff_fraction": 0.6,
+                   "context_handoff_tokens": None, "updated_at": time.time()}
+        write_handoff(repo, handoff)
+        prompt_id = session.send("prompt", {"message": prompt})
+        reason = None
+        used_tokens = None
+        context_window = None
+        aborted = False
+        grace = 0
+        outcome = None
+        while outcome is None:
+            now = time.monotonic()
+            if stop.is_set():
+                reason = reason or "shutdown requested"
+            if now >= deadline:
+                reason = reason or "pi session exceeded its time budget"
+            if reason and not aborted:
+                handoff.update(reason=reason, last_tokens=used_tokens,
+                               model_context_window=context_window,
+                               context_handoff_tokens=context_window * 3 / 5 if context_window else None,
+                               updated_at=time.time())
+                write_handoff(repo, handoff)
+                session.notify("abort")
+                aborted = True
+            message = session.receive(min(1.0, max(0.001, deadline - now)))
+            if message is None:
+                if aborted:
+                    # Bounded grace for the settled confirmation after an abort.
+                    grace += 1
+                    if grace > 30:
+                        outcome = {"exit_code": 1, "reason": reason or "pi session aborted",
+                                   "context_fraction": None,
+                                   "context_window_verified": used_tokens is not None and context_window is not None,
+                                   "last_tokens": used_tokens, "model_context_window": context_window,
+                                   "context_handoff_fraction": 0.6,
+                                   "context_handoff_tokens": handoff["context_handoff_tokens"]}
+                continue
+            method = message.get("type")
+            if method == "response" and message.get("id") == prompt_id and not message.get("success"):
+                reason = reason or "pi rejected the prompt command"
+            elif method in ("message_update", "message_end", "turn_end"):
+                observed_used, observed_window = pi_usage(message)
+                if observed_used is None:
+                    reason = reason or "pi context telemetry unavailable"
+                else:
+                    used_tokens, context_window = observed_used, observed_window
+                    handoff.update(last_tokens=used_tokens, model_context_window=context_window,
+                                   context_handoff_tokens=context_window * 3 / 5,
+                                   updated_at=time.time())
+                    write_handoff(repo, handoff)
+                    # Integer comparison keeps the strict >60% boundary exact.
+                    if used_tokens * 5 > context_window * 3:
+                        reason = reason or CONTEXT_HANDOFF_REASON
+            elif method == "agent_settled":
+                verified = used_tokens is not None and context_window is not None
+                if reason == CONTEXT_HANDOFF_REASON:
+                    success = verified
+                else:
+                    success = verified and not message.get("aborted", False) and reason is None
+                outcome = {"exit_code": 0 if success else 1,
+                           "reason": reason or "pi session settled",
+                           "context_fraction": used_tokens / context_window if verified else None,
+                           "context_window_verified": verified,
+                           "last_tokens": used_tokens, "model_context_window": context_window,
+                           "context_handoff_fraction": 0.6,
+                           "context_handoff_tokens": handoff["context_handoff_tokens"]}
+        handoff.update(reason=outcome["reason"], last_tokens=used_tokens,
+                       model_context_window=context_window, updated_at=time.time())
+        write_handoff(repo, handoff)
+        return outcome
+    except Exception as exc:
+        if "handoff" in locals():
+            handoff.update(reason="error: " + type(exc).__name__, updated_at=time.time())
+            write_handoff(repo, handoff)
+        raise
+    finally:
+        session.close()
+
+
+def budget_ok(state_path, *, max_seconds, max_sessions) -> tuple[bool, str]:
+    """Conservative read-only gate over the local pi usage budget window."""
+    try:
+        value = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, "pi usage budget state unavailable"
+    if not isinstance(value, dict):
+        return False, "pi usage budget state unavailable"
+    sessions = value.get("sessions")
+    active = value.get("active_seconds")
+    if type(sessions) is not int or sessions < 0 or type(active) not in (int, float) or active < 0:
+        return False, "pi usage budget state unavailable"
+    if sessions >= max_sessions:
+        return False, f"pi session budget reached ({sessions}/{max_sessions})"
+    if active >= max_seconds:
+        return False, f"pi active-second budget reached ({active:g}/{max_seconds:g})"
+    return True, f"pi budget: {sessions}/{max_sessions} sessions, {active:g}/{max_seconds:g} active seconds"
+
+
+def record_pi_budget(repo: Path, seconds: float) -> None:
+    """Add one settled session to the rolling pi budget window after it ends."""
+    path = Path(repo) / ".neural-lab" / "notes" / "pi-budget.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError
+    except (OSError, ValueError):
+        value = {}
+    now = time.time()
+    window_start = value.get("window_start")
+    if type(window_start) not in (int, float) or window_start < now - 86400:
+        value = {"sessions": 0, "active_seconds": 0, "window_start": now}
+    value["sessions"] = int(value.get("sessions", 0)) + 1
+    value["active_seconds"] = value.get("active_seconds", 0) + max(0, seconds)
+    write_handoff(repo, value, filename="pi-budget.json")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--backend", choices=("pi", "codex"),
+                        default=os.environ.get("NEURAL_LAB_ORCH_BACKEND", "codex"))
     parser.add_argument("--model", default=os.environ.get("NEURAL_LAB_ORCH_MODEL", "gpt-6.1-sol"))
     parser.add_argument("--repo", type=Path, default=Path("/repo"))
     parser.add_argument("--poll-seconds", type=int, default=300)
+    parser.add_argument("--pi-budget-seconds", type=int,
+                        default=int(os.environ.get("NEURAL_LAB_PI_BUDGET_SECONDS", "14400")))
+    parser.add_argument("--pi-budget-sessions", type=int,
+                        default=int(os.environ.get("NEURAL_LAB_PI_BUDGET_SESSIONS", "8")))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
     if not args.model:
         parser.error("Set a ChatGPT subscription-backed Codex model")
     if args.poll_seconds < 1:
         parser.error("--poll-seconds must be positive")
+    if min(args.pi_budget_seconds, args.pi_budget_sessions) < 1:
+        parser.error("--pi-budget-seconds and --pi-budget-sessions must be positive")
     notes = args.repo / ".neural-lab" / "notes"
     notes.mkdir(parents=True, exist_ok=True, mode=0o700)
     stop = threading.Event()
@@ -517,10 +775,16 @@ def main(argv=None) -> int:
         signal.signal(name, lambda *_: stop.set())
     try:
         while not stop.is_set():
-            try:
-                permitted, reason = capacity_ok(rpc_snapshot())
-            except Exception as exc:
-                permitted, reason = False, "usage check error: " + type(exc).__name__
+            if args.backend == "pi":
+                permitted, reason = budget_ok(
+                    args.repo / ".neural-lab" / "notes" / "pi-budget.json",
+                    max_seconds=args.pi_budget_seconds, max_sessions=args.pi_budget_sessions,
+                )
+            else:
+                try:
+                    permitted, reason = capacity_ok(rpc_snapshot())
+                except Exception as exc:
+                    permitted, reason = False, "usage check error: " + type(exc).__name__
             if stop.is_set():
                 break
             if not permitted:
@@ -531,7 +795,14 @@ def main(argv=None) -> int:
             else:
                 print(json.dumps({"orchestrator": "starting", "model": args.model, "usage": reason}), flush=True)
                 try:
-                    outcome = run_session(args.model, args.repo, PROMPT, stop=stop)
+                    prompt = PROMPT
+                    if args.backend == "pi":
+                        prompt += PI_ADDENDUM
+                        started = time.monotonic()
+                        outcome = run_pi_session(args.model, args.repo, prompt, stop=stop)
+                        record_pi_budget(args.repo, time.monotonic() - started)
+                    else:
+                        outcome = run_session(args.model, args.repo, prompt, stop=stop)
                 except Exception as exc:
                     outcome = {"exit_code": 1, "reason": "session error: " + type(exc).__name__}
                 code = outcome["exit_code"]
