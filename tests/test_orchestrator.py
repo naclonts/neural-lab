@@ -745,6 +745,55 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual(handoff["backend"], "pi")
         self.assertEqual(handoff["reason"], "pi context telemetry unavailable")
 
+    def test_run_pi_session_skips_usage_less_transcript_events(self):
+        """pi 1.5.0 emits message_end/message_update events for system and
+        user transcript messages with no usage field before the assistant
+        turn starts. Those must be skipped, not treated as telemetry loss;
+        only assistant events (which always carry usage) are validated."""
+        class FakeSession:
+            def __init__(self):
+                self.calls = []
+                self.messages = [
+                    # Real probe shape: system and user transcript events
+                    # carry no usage field at all.
+                    {"type": "message_end"},
+                    {"type": "message_end"},
+                    # The assistant turn always carries usage (streaming
+                    # deltas report totalTokens 0..., the final real counts).
+                    {"type": "message_update", "usage": {"totalTokens": 0}},
+                    {"type": "message_update", "usage": {"totalTokens": 400}},
+                    {"type": "message_end", "usage": {"totalTokens": 400}},
+                    {"type": "turn_end", "usage": {"totalTokens": 400}},
+                    {"type": "agent_settled", "aborted": False},
+                ]
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        fake = FakeSession()
+        with tempfile.TemporaryDirectory() as root:
+            # Window comes from the temp models-store.json catalog, as in
+            # real pi 1.5.0 sessions (events never carry contextWindow).
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 0)
+        self.assertEqual(outcome["reason"], "pi session settled")
+        self.assertTrue(outcome["context_window_verified"])
+        self.assertEqual(outcome["last_tokens"], 400)
+        self.assertEqual(outcome["model_context_window"], 1000)
+        self.assertNotIn("abort", [call[0] for call in fake.calls])
+
     def test_run_pi_session_aborts_when_window_is_unresolvable(self):
         """Used tokens arrive but neither the event nor the catalog/override
         supplies a window: the conservative abort must still fire."""

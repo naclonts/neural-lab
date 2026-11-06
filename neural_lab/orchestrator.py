@@ -735,6 +735,14 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
             if method == "response" and message.get("id") == prompt_id and not message.get("success"):
                 reason = reason or getattr(session, "auth_error", None) or "pi rejected the prompt command"
             elif method in ("message_update", "message_end", "turn_end"):
+                if message.get("usage") is None:
+                    # pi 1.5.0 emits message_update/message_end/turn_end events
+                    # for system and user transcript messages that carry no
+                    # usage field at all, before the assistant turn starts.
+                    # Those are transcript events, not telemetry loss: skip
+                    # them. Assistant events always carry a usage field, so
+                    # the conservative abort below is untouched for them.
+                    continue
                 observed_used, observed_window = pi_usage(message)
                 if observed_used is None:
                     # Used tokens must come from the events themselves; a
