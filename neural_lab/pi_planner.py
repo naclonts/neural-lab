@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import select
 import subprocess
 import tempfile
 import threading
@@ -17,6 +18,8 @@ from neural_lab.runner import CleanupError, DockerRunner
 
 PI_VERSION = "1.5.0"
 PI_IMAGE = "neural-lab-pi:1.5.0"
+# Hard cap on captured CLI stdout, mirroring the Codex planner's read limit.
+PLAN_OUTPUT_LIMIT = 131072
 FINAL_PROMPT = (
     "Read /request/request.json. Respond with ONLY the JSON plan object: exactly "
     "the keys hypothesis and code, no markdown fences, no commentary."
@@ -123,25 +126,42 @@ class PiPlanner:
                     ["docker", "start", "-ai", name],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 )
+                try:
+                    # pi --print takes the prompt as an argument and never reads
+                    # stdin; close it so the CLI cannot wait on an open pipe.
+                    process.stdin.close()
+                except OSError:
+                    pass
                 deadline = time.monotonic() + self.timeout
-                first = True
+                chunks = bytearray()
                 while True:
                     if self.stop.is_set():
                         raise PlannerError("pi planning interrupted by shutdown")
                     if time.monotonic() >= deadline:
                         raise PlannerError("pi planning exceeded its timeout")
-                    try:
-                        stdout, _ = process.communicate(input=b"" if first else None, timeout=1)
+                    ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                    if not ready:
+                        if process.poll() is not None:
+                            break
+                        continue
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    if not chunk:
                         break
-                    except subprocess.TimeoutExpired:
-                        first = False
+                    chunks.extend(chunk)
+                    if len(chunks) > PLAN_OUTPUT_LIMIT:
+                        # Hard cap: never buffer unbounded CLI output in memory.
+                        raise PlannerError("pi plan output exceeded its size limit")
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
                 if process.returncode != 0:
                     raise PlannerError(
                         "pi failed; check the stored API key with scripts/pi-auth.sh status "
                         "and CLI compatibility. No API fallback was attempted."
                     )
                 try:
-                    return validate_plan(extract_plan(stdout.decode("utf-8", "replace")))
+                    return validate_plan(extract_plan(bytes(chunks).decode("utf-8", "replace")))
                 except (UnicodeDecodeError, ValueError):
                     raise PlannerError("pi returned an unparseable plan; raw output omitted") from None
             except (OSError, subprocess.SubprocessError):

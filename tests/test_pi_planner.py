@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -6,12 +7,34 @@ import unittest
 from unittest.mock import Mock, patch
 
 from neural_lab.codex_planner import PLAN_SCHEMA
-from neural_lab.pi_planner import PI_IMAGE, PiPlanner, extract_plan
+from neural_lab.pi_planner import PI_IMAGE, PLAN_OUTPUT_LIMIT, PiPlanner, extract_plan
 from neural_lab.planner import PlannerError
 from neural_lab.runner import CleanupError
 
 
 PLAN = {"hypothesis": "Compare gated convolutions", "code": "print('sandbox only')\n"}
+
+
+def make_process(data=b"", returncode=0, exited=True):
+    """A process-like mock whose stdout is a real pipe carrying data."""
+    read_fd, write_fd = os.pipe()
+
+    def feed():
+        view = memoryview(data)
+        while view:
+            try:
+                written = os.write(write_fd, view[:4096])
+            except BrokenPipeError:
+                break
+            view = view[written:]
+        os.close(write_fd)
+
+    threading.Thread(target=feed, daemon=True).start()
+    process = Mock()
+    process.stdout = os.fdopen(read_fd, "rb")
+    process.returncode = returncode
+    process.poll.return_value = None if not exited else returncode
+    return process
 
 
 class PiPlannerTests(unittest.TestCase):
@@ -48,10 +71,7 @@ class PiPlannerTests(unittest.TestCase):
                 return "container"
             stdout = ("Scratch notes before the plan.\n```json\n"
                       + json.dumps(PLAN) + "\n```\nTrailing remarks.\n").encode()
-            process = Mock()
-            process.returncode = 0
-            process.poll.return_value = 0
-            process.communicate.return_value = (stdout, b"")
+            process = make_process(stdout)
             with patch("neural_lab.pi_planner.DockerRunner._docker", side_effect=control) as docker:
                 with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
                     result = planner.plan([{"summary": "previous experiment"}], 2)
@@ -66,10 +86,7 @@ class PiPlannerTests(unittest.TestCase):
     def test_unparseable_output_raises_sanitized_error_without_raw_stdout(self):
         with tempfile.TemporaryDirectory() as auth:
             planner = PiPlanner("owner", auth_dir=auth)
-            process = Mock()
-            process.returncode = 0
-            process.poll.return_value = 0
-            process.communicate.return_value = (b"The plan is SECRET-MARKER, trust me.", b"")
+            process = make_process(b"The plan is SECRET-MARKER, trust me.")
             with patch("neural_lab.pi_planner.DockerRunner._docker"):
                 with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
                     with self.assertRaises(PlannerError) as caught:
@@ -80,9 +97,7 @@ class PiPlannerTests(unittest.TestCase):
     def test_nonzero_exit_reports_no_api_fallback_and_removes_container(self):
         with tempfile.TemporaryDirectory() as auth:
             planner = PiPlanner("owner", auth_dir=auth)
-            process = Mock(returncode=1)
-            process.poll.return_value = 1
-            process.communicate.return_value = (b"", b"")
+            process = make_process(b"", returncode=1)
             with patch("neural_lab.pi_planner.DockerRunner._docker") as docker:
                 with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
                     with self.assertRaisesRegex(PlannerError, "No API fallback"):
@@ -94,8 +109,7 @@ class PiPlannerTests(unittest.TestCase):
         stop.set()
         with tempfile.TemporaryDirectory() as auth:
             planner = PiPlanner("owner", auth_dir=auth, stop=stop)
-            process = Mock()
-            process.poll.return_value = None
+            process = make_process(b"", exited=False)
             with patch("neural_lab.pi_planner.DockerRunner._docker") as docker:
                 with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
                     with self.assertRaisesRegex(PlannerError, "shutdown"):
@@ -106,8 +120,7 @@ class PiPlannerTests(unittest.TestCase):
     def test_timeout_cleans_up_and_cleanup_failure_halts(self):
         with tempfile.TemporaryDirectory() as auth:
             planner = PiPlanner("owner", auth_dir=auth, timeout=1)
-            process = Mock()
-            process.poll.return_value = None
+            process = make_process(b"", exited=False)
             with patch("neural_lab.pi_planner.DockerRunner._docker"):
                 with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
                     with patch("neural_lab.pi_planner.time.monotonic", side_effect=[0, 2]):
@@ -137,6 +150,32 @@ class PiPlannerTests(unittest.TestCase):
         result = extract_plan(text)
         self.assertEqual(result["code"], "d = {1: {2: 3}}\nassert d[1] == {2: 3}\n")
         self.assertEqual(result["hypothesis"], 'nested {braces} and "quotes" \\ inside')
+
+    def test_oversized_stdout_is_capped_killed_and_sanitized(self):
+        with tempfile.TemporaryDirectory() as auth:
+            planner = PiPlanner("owner", auth_dir=auth)
+            data = b"SECRET-MARKER" * (PLAN_OUTPUT_LIMIT // 8 + 1)
+            process = make_process(data, exited=False)
+            with patch("neural_lab.pi_planner.DockerRunner._docker") as docker:
+                with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
+                    with self.assertRaisesRegex(PlannerError, "size limit") as caught:
+                        planner.plan([], 1)
+            self.assertNotIn("SECRET-MARKER", str(caught.exception))
+            process.kill.assert_called_once()
+            self.assertEqual(docker.call_args.args[:2], ("rm", "-f"))
+
+    def test_output_at_the_cap_is_still_accepted(self):
+        plan = json.dumps(PLAN).encode()
+        padding = PLAN_OUTPUT_LIMIT - len(plan) - 20
+        stdout = b"x" * padding + b"\n```json\n" + plan + b"\n```\n"
+        self.assertLessEqual(len(stdout), PLAN_OUTPUT_LIMIT)
+        with tempfile.TemporaryDirectory() as auth:
+            planner = PiPlanner("owner", auth_dir=auth)
+            process = make_process(stdout)
+            with patch("neural_lab.pi_planner.DockerRunner._docker"):
+                with patch("neural_lab.pi_planner.subprocess.Popen", return_value=process):
+                    result = planner.plan([], 1)
+        self.assertEqual(result.hypothesis, PLAN["hypothesis"])
 
 
 if __name__ == "__main__":

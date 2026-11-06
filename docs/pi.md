@@ -14,8 +14,9 @@ gate** (see below). You are responsible for your provider's API spend.
 ## Image build
 
 The planner/orchestrator image is pinned to pi 1.5.0 on node:24-bookworm-slim.
-`scripts/pi-auth.sh` builds it automatically; to build it manually (never as
-generated code):
+`scripts/pi-auth.sh set-key` (and an explicit `scripts/pi-auth.sh build`) build
+it automatically; `status` and `clear` reuse the existing image. To build it
+manually (never as generated code):
 
 ```bash
 docker build -t neural-lab-pi:1.5.0 -f docker/pi.Dockerfile .
@@ -35,10 +36,13 @@ bash scripts/pi-auth.sh clear
 - The provider object is selected by `PI_PROVIDER` (default `anthropic`).
 - The auth directory defaults to `~/.local/share/neural-lab/pi`; set
   `NEURAL_LAB_PI_HOME` to override. Setup records it in the private `.env`, and
-  the doctor/planner containers resolve the same path from the Compose
-  configuration.
+  the doctor/planner/orchestrator containers resolve the same path from the Compose
+  configuration. An explicitly set `NEURAL_LAB_PI_HOME` takes precedence over the
+  Compose-resolved path; `scripts/pi-auth.sh` warns when the two diverge.
 - `status` runs a hardened one-shot `pi --print --offline` container and inspects
-  the exit code explicitly.
+  the exit code explicitly. A clean exit means a real provider round-trip through
+  `pi --print` succeeded; `--offline` only suppresses update and catalog
+  refreshes, not provider inference.
 
 ## Planner (single experiments)
 
@@ -90,13 +94,17 @@ unreadable state pauses the orchestrator.
 | `NEURAL_LAB_PI_BUDGET_SECONDS` / `--pi-budget-seconds` | 14400 | Active session seconds per rolling 24-hour window |
 | `NEURAL_LAB_PI_BUDGET_SESSIONS` / `--pi-budget-sessions` | 8 | Settled sessions per rolling 24-hour window |
 
-The window resets automatically when `window_start` is older than a day. Set
-both knobs in `.env` to make the Compose service enforce them.
+The window resets automatically when `window_start` is older than a day. The
+read-only gate treats a missing, invalid, or stale `window_start` as a fresh
+window, so the gate reopens after a day even if no further session runs to
+persist the reset (the reset is written back by the recorder on the next
+session). Set both knobs in `.env` to make the Compose service enforce them.
 
 ## Security
 
-- The auth directory is mounted **only** into the planner and doctor containers
-  at `/pi`, never into the trusted GPU worker or a training container.
+- The auth directory is mounted into the planner, orchestrator, and doctor
+  containers at `/pi`, never into the trusted GPU worker or a training container.
+  The orchestrator can read the API key from this mount; the GPU worker cannot.
 - No API key is passed through container environment variables; the pi CLI reads
   its own auth state from the dedicated mount (`PI_CODING_AGENT_DIR=/pi`).
 - The planner and orchestrator containers use a read-only root filesystem (planner),

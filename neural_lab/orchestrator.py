@@ -17,6 +17,8 @@ from collections import deque
 from neural_lab.research_direction import RESEARCH_DIRECTION
 
 CONTEXT_HANDOFF_REASON = "context exceeded 60% of reported window"
+CONTEXT_HANDOFF_FRACTION = 0.6
+PI_AUTH_ERROR = "pi could not authenticate with the configured provider"
 
 PI_ADDENDUM = """
 
@@ -390,7 +392,7 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
         recent_messages = deque(maxlen=4)
         handoff = {"thread_id": thread_id, "turn_id": turn_id, "model": model,
                    "reason": "running", "last_tokens": None, "model_context_window": None,
-                   "context_handoff_fraction": 0.6, "context_handoff_tokens": None,
+                   "context_handoff_fraction": CONTEXT_HANDOFF_FRACTION, "context_handoff_tokens": None,
                    "recent_agent_messages": [], "updated_at": time.time()}
         write_handoff(repo, handoff)
         next_usage_poll = time.monotonic() + usage_poll_seconds
@@ -463,11 +465,12 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
                         reason += "; " + catalog_error
                         handoff["model_catalog_error"] = catalog_error
                 else:
-                    # Integer comparison keeps the strict >60% boundary exact.
-                    if used_tokens * 5 > context_window * 3:
+                    # A tie at exactly 60% divides to the same double as the
+                    # constant, so the strict > boundary stays exact.
+                    if used_tokens / context_window > CONTEXT_HANDOFF_FRACTION:
                         reason = CONTEXT_HANDOFF_REASON
                 handoff.update(last_tokens=used_tokens, model_context_window=context_window,
-                               context_handoff_tokens=context_window * 3 / 5 if context_window and context_window > 0 else None,
+                               context_handoff_tokens=context_window * CONTEXT_HANDOFF_FRACTION if context_window and context_window > 0 else None,
                                reason=reason or "running", updated_at=time.time())
                 write_handoff(repo, handoff)
             elif message.get("method") == "item/completed":
@@ -495,7 +498,7 @@ def run_session(model: str, repo: Path, prompt: str, *, usage_poll_seconds: int 
                         "reason": reason or status, "context_fraction": fraction,
                         "context_window_verified": telemetry_seen and fraction is not None,
                         "last_tokens": used_tokens, "model_context_window": context_window,
-                        "context_handoff_fraction": 0.6,
+                        "context_handoff_fraction": CONTEXT_HANDOFF_FRACTION,
                         "context_handoff_tokens": handoff["context_handoff_tokens"]}
     except Exception as exc:
         if "handoff" in locals():
@@ -529,7 +532,7 @@ class PiSession:
         while chunk := self.process.stderr.readline(8192):
             lowered = chunk.lower()
             if b"unauthorized" in lowered or b"api key" in lowered:
-                self.auth_error = "pi could not authenticate with the configured provider"
+                self.auth_error = PI_AUTH_ERROR
 
     def send(self, record_type: str, fields: dict | None = None) -> str:
         self.sequence += 1
@@ -632,7 +635,7 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
             prompt += "\nPrevious session handoff (private local state):\n" + old_handoff
         deadline = time.monotonic() + max_session_seconds
         handoff = {"backend": "pi", "model": model, "reason": "running", "last_tokens": None,
-                   "model_context_window": None, "context_handoff_fraction": 0.6,
+                   "model_context_window": None, "context_handoff_fraction": CONTEXT_HANDOFF_FRACTION,
                    "context_handoff_tokens": None, "updated_at": time.time()}
         write_handoff(repo, handoff)
         prompt_id = session.send("prompt", {"message": prompt})
@@ -642,6 +645,18 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
         aborted = False
         grace = 0
         outcome = None
+        def aborted_outcome() -> dict:
+            verified = used_tokens is not None and context_window is not None
+            return {"exit_code": 1, "reason": reason or "pi session aborted",
+                    "context_fraction": used_tokens / context_window if verified else None,
+                    "context_window_verified": verified,
+                    "last_tokens": used_tokens, "model_context_window": context_window,
+                    "context_handoff_fraction": CONTEXT_HANDOFF_FRACTION,
+                    "context_handoff_tokens": handoff["context_handoff_tokens"]}
+
+        written_tokens = None
+        written_window = None
+        last_progress_write = time.monotonic()
         while outcome is None:
             now = time.monotonic()
             if stop.is_set():
@@ -651,39 +666,48 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
             if reason and not aborted:
                 handoff.update(reason=reason, last_tokens=used_tokens,
                                model_context_window=context_window,
-                               context_handoff_tokens=context_window * 3 / 5 if context_window else None,
+                               context_handoff_tokens=context_window * CONTEXT_HANDOFF_FRACTION if context_window else None,
                                updated_at=time.time())
                 write_handoff(repo, handoff)
                 session.notify("abort")
                 aborted = True
+            if aborted and (stop.is_set() or now >= deadline):
+                # Never rely on message starvation alone: a continuously streaming
+                # pi process must not delay shutdown or overrun the deadline.
+                outcome = aborted_outcome()
+                break
             message = session.receive(min(1.0, max(0.001, deadline - now)))
             if message is None:
                 if aborted:
                     # Bounded grace for the settled confirmation after an abort.
                     grace += 1
                     if grace > 30:
-                        outcome = {"exit_code": 1, "reason": reason or "pi session aborted",
-                                   "context_fraction": None,
-                                   "context_window_verified": used_tokens is not None and context_window is not None,
-                                   "last_tokens": used_tokens, "model_context_window": context_window,
-                                   "context_handoff_fraction": 0.6,
-                                   "context_handoff_tokens": handoff["context_handoff_tokens"]}
+                        outcome = aborted_outcome()
                 continue
             method = message.get("type")
             if method == "response" and message.get("id") == prompt_id and not message.get("success"):
-                reason = reason or "pi rejected the prompt command"
+                reason = reason or getattr(session, "auth_error", None) or "pi rejected the prompt command"
             elif method in ("message_update", "message_end", "turn_end"):
                 observed_used, observed_window = pi_usage(message)
                 if observed_used is None:
                     reason = reason or "pi context telemetry unavailable"
                 else:
                     used_tokens, context_window = observed_used, observed_window
-                    handoff.update(last_tokens=used_tokens, model_context_window=context_window,
-                                   context_handoff_tokens=context_window * 3 / 5,
-                                   updated_at=time.time())
-                    write_handoff(repo, handoff)
-                    # Integer comparison keeps the strict >60% boundary exact.
-                    if used_tokens * 5 > context_window * 3:
+                    # Throttle the fsync-rewritten handoff file: persist only on a
+                    # material token change or at most once per 30 seconds.
+                    material = (context_window != written_window
+                                or abs(used_tokens - (written_tokens or 0))
+                                >= max(1024, context_window // 100))
+                    if material or time.monotonic() - last_progress_write >= 30.0:
+                        handoff.update(last_tokens=used_tokens, model_context_window=context_window,
+                                       context_handoff_tokens=context_window * CONTEXT_HANDOFF_FRACTION,
+                                       updated_at=time.time())
+                        write_handoff(repo, handoff)
+                        written_tokens, written_window = used_tokens, context_window
+                        last_progress_write = time.monotonic()
+                    # A tie at exactly 60% divides to the same double as the
+                    # constant, so the strict > boundary stays exact.
+                    if used_tokens / context_window > CONTEXT_HANDOFF_FRACTION:
                         reason = reason or CONTEXT_HANDOFF_REASON
             elif method == "agent_settled":
                 verified = used_tokens is not None and context_window is not None
@@ -696,8 +720,11 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
                            "context_fraction": used_tokens / context_window if verified else None,
                            "context_window_verified": verified,
                            "last_tokens": used_tokens, "model_context_window": context_window,
-                           "context_handoff_fraction": 0.6,
+                           "context_handoff_fraction": CONTEXT_HANDOFF_FRACTION,
                            "context_handoff_tokens": handoff["context_handoff_tokens"]}
+                if outcome["exit_code"] != 0 and getattr(session, "auth_error", None):
+                    # Surface only the sanitized auth category, never raw stderr.
+                    outcome["reason"] = session.auth_error
         handoff.update(reason=outcome["reason"], last_tokens=used_tokens,
                        model_context_window=context_window, updated_at=time.time())
         write_handoff(repo, handoff)
@@ -723,6 +750,13 @@ def budget_ok(state_path, *, max_seconds, max_sessions) -> tuple[bool, str]:
     active = value.get("active_seconds")
     if type(sessions) is not int or sessions < 0 or type(active) not in (int, float) or active < 0:
         return False, "pi usage budget state unavailable"
+    window_start = value.get("window_start")
+    if type(window_start) not in (int, float) or window_start < time.time() - 86400:
+        # Read-only gate: a missing, invalid, or stale window counts as a fresh
+        # one so the gate can reopen after a day; the reset itself is persisted
+        # by record_pi_budget on the next write, never mutated here.
+        return True, (f"pi budget window reset: 0/{max_sessions} sessions, "
+                      f"0/{max_seconds:g} active seconds")
     if sessions >= max_sessions:
         return False, f"pi session budget reached ({sessions}/{max_sessions})"
     if active >= max_seconds:
@@ -735,13 +769,21 @@ def record_pi_budget(repo: Path, seconds: float) -> None:
     path = Path(repo) / ".neural-lab" / "notes" / "pi-budget.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError
+        if isinstance(value, dict):
+            sessions = value.get("sessions")
+            active = value.get("active_seconds")
+            window_start = value.get("window_start")
+            valid = (type(sessions) is int and sessions >= 0
+                     and type(active) in (int, float) and active >= 0
+                     and type(window_start) in (int, float))
+        else:
+            valid = False
     except (OSError, ValueError):
-        value = {}
+        valid = False
     now = time.time()
-    window_start = value.get("window_start")
-    if type(window_start) not in (int, float) or window_start < now - 86400:
+    if not valid or window_start < now - 86400:
+        # Same exact-type conservative validation as budget_ok: hand-typed or
+        # corrupt state degrades to a fresh window instead of raising.
         value = {"sessions": 0, "active_seconds": 0, "window_start": now}
     value["sessions"] = int(value.get("sessions", 0)) + 1
     value["active_seconds"] = value.get("active_seconds", 0) + max(0, seconds)
@@ -761,7 +803,7 @@ def main(argv=None) -> int:
                         default=int(os.environ.get("NEURAL_LAB_PI_BUDGET_SESSIONS", "8")))
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
-    if not args.model:
+    if not args.model and args.backend == "codex":
         parser.error("Set a ChatGPT subscription-backed Codex model")
     if args.poll_seconds < 1:
         parser.error("--poll-seconds must be positive")
@@ -799,8 +841,13 @@ def main(argv=None) -> int:
                     if args.backend == "pi":
                         prompt += PI_ADDENDUM
                         started = time.monotonic()
-                        outcome = run_pi_session(args.model, args.repo, prompt, stop=stop)
-                        record_pi_budget(args.repo, time.monotonic() - started)
+                        try:
+                            outcome = run_pi_session(args.model, args.repo, prompt, stop=stop)
+                        finally:
+                            # Record elapsed time on BOTH paths: a session that
+                            # raises mid-run must still advance the budget file,
+                            # or repeated failures bypass the spend gate.
+                            record_pi_budget(args.repo, time.monotonic() - started)
                     else:
                         outcome = run_session(args.model, args.repo, prompt, stop=stop)
                 except Exception as exc:

@@ -7,13 +7,22 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 operation="${1:-status}"
 case "$operation" in
-  status|set-key|clear) ;;
-  *) echo "Usage: bash scripts/pi-auth.sh [status|set-key|clear]" >&2; exit 2 ;;
+  status|set-key|clear|build) ;;
+  *) echo "Usage: bash scripts/pi-auth.sh [status|set-key|clear|build]" >&2; exit 2 ;;
 esac
 umask 077
 auth_dir="${NEURAL_LAB_PI_HOME:-$HOME/.local/share/neural-lab/pi}"
 if [ -f .env ]; then
-  auth_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["pi-orchestrator"]["volumes"] if v["target"] == "/pi"))')"
+  compose_dir="$(docker compose -f compose.research.yaml config --format json | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["pi-orchestrator"]["volumes"] if v["target"] == "/pi"))')"
+  if [ -n "${NEURAL_LAB_PI_HOME:-}" ]; then
+    # An explicitly set NEURAL_LAB_PI_HOME wins over the Compose-resolved path;
+    # warn on divergence so the CLI and the containers never differ silently.
+    if [ "$compose_dir" != "$auth_dir" ]; then
+      echo "Warning: NEURAL_LAB_PI_HOME ($auth_dir) differs from the Compose-resolved path ($compose_dir); using NEURAL_LAB_PI_HOME." >&2
+    fi
+  else
+    auth_dir="$compose_dir"
+  fi
 fi
 mkdir -p -- "$auth_dir"
 auth_dir="$(cd -- "$auth_dir" && pwd -P)"
@@ -21,8 +30,15 @@ chmod 700 -- "$auth_dir"
 case "$auth_dir" in
   *","*) echo "Auth directory cannot contain commas." >&2; exit 2 ;;
 esac
-docker build -t neural-lab-pi:1.5.0 -f docker/pi.Dockerfile .
+# Only set-key (and an explicit build) rebuild the image; status and clear work
+# with the image that is already present.
+if [ "$operation" = "build" ] || [ "$operation" = "set-key" ]; then
+  docker build -t neural-lab-pi:1.5.0 -f docker/pi.Dockerfile .
+fi
 case "$operation" in
+  build)
+    echo "Built neural-lab-pi:1.5.0."
+    ;;
   # The key arrives on STDIN, never as an argument, so it stays out of the
   # process list and shell history.
   set-key)

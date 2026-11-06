@@ -7,14 +7,15 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_ok,
-                                     context_fraction, main, rpc_snapshot, run_pi_session,
-                                     run_session)
+                                     context_fraction, main, record_pi_budget, rpc_snapshot,
+                                     run_pi_session, run_session)
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -388,18 +389,145 @@ class PiTransportTests(unittest.TestCase):
     def test_budget_blocks_at_session_and_second_limits(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "pi-budget.json"
-            path.write_text(json.dumps({"sessions": 1, "active_seconds": 10, "window_start": 1}))
+            fresh = time.time()
+            path.write_text(json.dumps({"sessions": 1, "active_seconds": 10, "window_start": fresh}))
             permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
             self.assertTrue(permitted)
             self.assertIn("1/2", reason)
-            path.write_text(json.dumps({"sessions": 2, "active_seconds": 10, "window_start": 1}))
+            path.write_text(json.dumps({"sessions": 2, "active_seconds": 10, "window_start": fresh}))
             permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
             self.assertFalse(permitted)
             self.assertIn("session budget", reason)
-            path.write_text(json.dumps({"sessions": 1, "active_seconds": 100, "window_start": 1}))
+            path.write_text(json.dumps({"sessions": 1, "active_seconds": 100, "window_start": fresh}))
             permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
             self.assertFalse(permitted)
             self.assertIn("active-second budget", reason)
+
+    def test_budget_gate_reopens_after_a_stale_or_invalid_window(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "pi-budget.json"
+            path.write_text(json.dumps({
+                "sessions": 9, "active_seconds": 99999,
+                "window_start": time.time() - 3 * 86400,
+            }))
+            permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
+            self.assertTrue(permitted)
+            self.assertIn("window reset", reason)
+            self.assertIn("0/2 sessions", reason)
+            self.assertIn("0/100 active seconds", reason)
+            # A missing or invalid window_start is treated the same way.
+            for state in ({"sessions": 9, "active_seconds": 99999},
+                          {"sessions": 9, "active_seconds": 99999, "window_start": "oops"}):
+                path.write_text(json.dumps(state))
+                permitted, reason = budget_ok(path, max_seconds=100, max_sessions=2)
+                self.assertTrue(permitted)
+                self.assertIn("window reset", reason)
+            # record_pi_budget persists the reset when the next session ends.
+            record_pi_budget(Path(root), 7.0)
+            persisted = json.loads(
+                (Path(root) / ".neural-lab" / "notes" / "pi-budget.json").read_text())
+            self.assertEqual(persisted["sessions"], 1)
+            self.assertEqual(persisted["active_seconds"], 7.0)
+            self.assertGreater(persisted["window_start"], time.time() - 60)
+
+    def test_record_pi_budget_degrades_gracefully_on_hand_typed_state(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"sessions": "2", "active_seconds": "lots"}))
+            record_pi_budget(Path(root), 5.0)
+            state = json.loads(path.read_text())
+            self.assertEqual(state["sessions"], 1)
+            self.assertEqual(state["active_seconds"], 5.0)
+
+    def test_pi_budget_is_recorded_even_when_the_session_raises(self):
+        with tempfile.TemporaryDirectory() as root:
+            budget = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
+            budget.parent.mkdir(parents=True)
+            budget.write_text(json.dumps(
+                {"sessions": 0, "active_seconds": 0, "window_start": time.time()}))
+            with patch("neural_lab.orchestrator.run_pi_session",
+                       side_effect=RuntimeError("boom")):
+                code = main(["--backend", "pi", "--model", "pi-model",
+                             "--repo", root, "--once"])
+            self.assertEqual(code, 1)
+            state = json.loads(budget.read_text())
+            self.assertEqual(state["sessions"], 1)
+            self.assertGreaterEqual(state["active_seconds"], 0)
+
+    def test_pi_model_argument_is_not_rejected_as_a_codex_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            budget = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
+            budget.parent.mkdir(parents=True)
+            budget.write_text(json.dumps(
+                {"sessions": 0, "active_seconds": 0, "window_start": time.time()}))
+            with patch("neural_lab.orchestrator.run_pi_session",
+                       return_value={"exit_code": 0, "reason": "pi session settled"}):
+                code = main(["--backend", "pi", "--model", "anthropic/claude-sonnet-4.5",
+                             "--repo", root, "--once"])
+            self.assertEqual(code, 0)
+
+    def test_run_pi_session_hard_exits_on_stop_even_while_streaming(self):
+        class StreamingSession:
+            def __init__(self):
+                self.calls = []
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                # Simulates a continuously streaming pi process that never starves.
+                return {"type": "message_update",
+                        "usage": {"totalTokens": 10, "contextWindow": 1000}}
+
+            def close(self):
+                pass
+
+        stop = threading.Event()
+        stop.set()
+        fake = StreamingSession()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("pi-model", Path(root), "test", stop=stop)
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], "shutdown requested")
+        self.assertIn("abort", [call[0] for call in fake.calls])
+
+    def test_run_pi_session_surfaces_sanitized_auth_error(self):
+        class AuthFailSession:
+            def __init__(self):
+                self.calls = []
+                self.auth_error = "pi could not authenticate with the configured provider"
+                self.messages = [
+                    {"type": "response", "id": "neural-lab-1", "success": False},
+                    {"type": "agent_settled", "aborted": True},
+                ]
+
+            def send(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+                return "neural-lab-1"
+
+            def notify(self, record_type, fields=None):
+                self.calls.append((record_type, fields))
+
+            def receive(self, timeout):
+                return self.messages.pop(0) if self.messages else None
+
+            def close(self):
+                pass
+
+        fake = AuthFailSession()
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"],
+                         "pi could not authenticate with the configured provider")
+        self.assertIn("abort", [call[0] for call in fake.calls])
 
     def test_pi_session_spawns_rpc_process_group_and_closes_with_signals(self):
         process = Mock()
