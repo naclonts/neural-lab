@@ -165,7 +165,9 @@ def capacity_ok(snapshot: dict) -> tuple[bool, str]:
     for bucket in buckets.values():
         if not isinstance(bucket, dict):
             continue
-        for name, label, threshold in (("primary", "5-hour", 75), ("secondary", "weekly", 95)):
+        for name, label, threshold in (
+            ("primary", "5-hour", int(os.environ.get("NEURAL_LAB_PRIMARY_PAUSE_PCT", "75"))),
+            ("secondary", "weekly", int(os.environ.get("NEURAL_LAB_SECONDARY_PAUSE_PCT", "95")))):
             window = bucket.get(name)
             if isinstance(window, dict) and type(window.get("usedPercent")) in (int, float):
                 value = window["usedPercent"]

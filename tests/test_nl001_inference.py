@@ -1,4 +1,5 @@
 import hashlib
+import copy
 import json
 import subprocess
 import sys
@@ -19,6 +20,53 @@ from neural_lab.nl001_training import _flatten, _save_training_artifacts, _save_
 
 
 class InferenceTests(unittest.TestCase):
+    def test_independent_audit_rejects_repinned_claim_query_mismatch_for_both_arms(self):
+        corpus = make_sampled_corpus({'train': [11], 'validation': [12], 'test': [13]}, per_stratum=1)
+        # Repinning makes custody valid: semantic disagreement must still fail.
+        bad = copy.deepcopy(corpus)
+        question = bad['splits']['test'][0]['variants'][2]['questions'][0]
+        symbols = bad['splits']['test'][0]['variants'][2]['symbols']
+        question['query']['subject'] = next(s for s in symbols if s != question['query']['subject'])
+        bad['split_sha256']['test'] = digest(bad['splits']['test'])
+        bad['sha256'] = digest({k: v for k, v in bad.items() if k != 'sha256'})
+        manifest = make_manifest(bad)
+        programs = bad['splits']['test']
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for arm in ('A', 'B'):
+                entry = ArtifactWriter(root / arm).save_checkpoint('model', CalibrationModel(arm), arm=arm, seed=1, selection={})
+                output = root / (arm + '.json')
+                args = dict(programs=programs, split='test', manifest=manifest,
+                            manifest_sha256=digest(manifest), checkpoint_sha256=entry['sha256'], arm=arm)
+                pin = infer_checkpoint(**args, checkpoint=root / arm / entry['path'], output=output)
+                with self.subTest(arm=arm), self.assertRaisesRegex(ValueError, 'claim/query alignment mismatch'):
+                    audit_predictions(**args, predictions_path=output, predictions_sha256=pin)
+
+    def test_independent_audit_rejects_repinned_invalid_view_for_both_arms(self):
+        corpus = make_sampled_corpus({'train': [11], 'validation': [12], 'test': [13]}, per_stratum=1)
+        bad = copy.deepcopy(corpus)
+        bad['splits']['test'][0]['variants'][0]['questions'][0]['view'] = 'invalid'
+        bad['split_sha256']['test'] = digest(bad['splits']['test'])
+        bad['sha256'] = digest({k: v for k, v in bad.items() if k != 'sha256'})
+        manifest = make_manifest(bad)
+        programs = bad['splits']['test']
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for arm in ('A', 'B'):
+                entry = ArtifactWriter(root / arm).save_checkpoint('model', CalibrationModel(arm), arm=arm, seed=1, selection={})
+                output = root / (arm + '.json')
+                args = dict(programs=programs, split='test', manifest=manifest,
+                            manifest_sha256=digest(manifest), checkpoint_sha256=entry['sha256'], arm=arm)
+                envelope = {'version': 'nl001-inference-v1', 'split': 'test', 'split_sha256': digest(programs),
+                            'manifest_sha256': digest(manifest), 'checkpoint_sha256': entry['sha256'],
+                            'arm': arm, 'edge_threshold': 0.5,
+                            'predictions': [{'identity': digest({'program': v, 'question': q}), 'prediction': {}}
+                                            for p in programs for v in p['variants'] for q in v['questions']]}
+                output.write_text(json.dumps(envelope))
+                pin = digest(envelope)
+                with self.subTest(arm=arm), self.assertRaisesRegex(ValueError, 'invalid question view'):
+                    audit_predictions(**args, predictions_path=output, predictions_sha256=pin)
+
     def test_checkpoint_rejects_corrupted_tensor_even_with_matching_pin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -162,11 +210,14 @@ class InferenceTests(unittest.TestCase):
             self.assertFalse(report_path.exists())
             production = replay_saved(**request)
             self.assertEqual(audit['counts']['replay_passed'], 3)
+            self.assertEqual(audit['counts']['verified_claims'], 2)
+            self.assertTrue(audit['details'][indices[0]]['claim_verified'])
             self.assertTrue(audit['details'][other]['replayed'])
+            self.assertFalse(audit['details'][other]['claim_verified'])
             self.assertFalse(audit['details'][other]['query_aligned'])
             self.assertFalse(audit['details'][other]['correct'])
             for actual, expected in zip(audit['details'], production['details']):
-                self.assertEqual({k: v for k, v in actual.items() if k != 'identity'}, expected)
+                self.assertEqual({k: v for k, v in actual.items() if k not in ('identity', 'claim_verified')}, expected)
             envelope['predictions'][indices[1]]['prediction']['certificate'] = {'kind': 'closed_set', 'nodes': []}
             output.write_text(json.dumps(envelope))
             request['predictions_sha256'] = digest(envelope)

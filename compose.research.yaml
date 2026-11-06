@@ -75,6 +75,8 @@ services:
       CODEX_HOME: /codex
       PYTHONDONTWRITEBYTECODE: "1"
       NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-gpt-6.1-sol}
+      NEURAL_LAB_PRIMARY_PAUSE_PCT: ${NEURAL_LAB_PRIMARY_PAUSE_PCT:-85}
+      NEURAL_LAB_SECONDARY_PAUSE_PCT: ${NEURAL_LAB_SECONDARY_PAUSE_PCT:-95}
     logging:
       driver: json-file
       options:

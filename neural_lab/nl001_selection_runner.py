@@ -28,6 +28,20 @@ def _write(path, obj):
     Path(path).write_text(json.dumps(obj, sort_keys=True, allow_nan=False, indent=2))
 
 
+def _check_audit_details(details, rows, expected_details):
+    """Compare shared replay fields and independently check claim verification."""
+    fields = {'status', 'query_aligned', 'replayed', 'correct'}
+    if len(details) != len(rows) or len(details) != len(expected_details):
+        raise ValueError('independent per-claim audit disagrees with replay')
+    for detail, row, expected in zip(details, rows, expected_details):
+        if (set(detail) != fields | {'identity', 'claim_verified'} or set(expected) != fields
+                or detail['identity'] != row['identity']
+                or {key: detail[key] for key in fields} != expected
+                or type(detail['claim_verified']) is not bool
+                or detail['claim_verified'] != (expected['replayed'] and expected['query_aligned'])):
+            raise ValueError('independent per-claim audit disagrees with replay')
+
+
 
 def _child(module, args, report):
     """Optionally require a child import report under calibration custody."""
@@ -44,26 +58,72 @@ def _child(module, args, report):
             raise ValueError('missing or invalid child import attestation')
 
 
+def _audit_gates(manifest, manifest_sha256, audit, audit_sha256,
+                 identity, identity_sha256, expected_identities_sha256, semantic, semantic_sha256):
+    """Validate retained reports; custody and audit execution remain external."""
+    if digest(audit) != audit_sha256 or audit.get('version') != 'nl001-corpus-audit-v2' or audit.get('regeneration') != 'exact match using current generator and checker':
+        raise ValueError('corpus audit does not match independently retained digest')
+    if (audit.get('manifest') != manifest or audit.get('manifest_sha256') != manifest_sha256
+            or audit.get('corpus_sha256') != manifest.get('corpus_sha256')):
+        raise ValueError('corpus audit and split manifest disagree')
+    try:
+        splits = manifest['splits']
+        if set(splits) != {'train', 'validation', 'test'}:
+            raise ValueError('invalid split coverage')
+        counts = [len(splits[name]['seeds']) for name in ('train', 'validation', 'test')]
+        if any(n <= 0 for n in counts):
+            raise ValueError('empty split')
+        # Sampled v1 has one/one/four presentations and two views each.
+        a, b, c = 2 * counts[0], 2 * counts[1], 8 * counts[2]
+        required = a*b + a*c + b*c
+        comparison = audit['observed_view_audit']
+        if (type(comparison['comparisons']) is not int or comparison['comparisons'] != required
+                or type(comparison['required_comparisons']) is not int or comparison['required_comparisons'] != required
+                or type(comparison['max_comparisons']) is not int or comparison['max_comparisons'] < required
+                or type(comparison['max_states_per_comparison']) is not int or comparison['max_states_per_comparison'] <= 0):
+            raise ValueError('incomplete corpus audit comparisons')
+        if (digest(identity) != identity_sha256 or identity['version'] != 'nl001-alignment-identity-audit-v1'
+                or identity['corpus_sha256'] != manifest['corpus_sha256']
+                or identity['expected_identities_sha256'] != expected_identities_sha256
+                or not isinstance(identity['expected_identities_sha256'], str)
+                or len(identity['expected_identities_sha256']) != 64
+                or any(c not in '0123456789abcdef' for c in identity['expected_identities_sha256'])):
+            raise ValueError('invalid identity audit')
+        questions = identity['question_counts']
+        if set(questions) != set(splits) or any(type(v) is not int or v <= 0 for v in questions.values()):
+            raise ValueError('invalid identity question counts')
+        if (digest(semantic) != semantic_sha256 or semantic['version'] != 'nl001-semantic-count-attestation-v1'
+                or semantic['corpus_sha256'] != manifest['corpus_sha256']
+                or set(semantic) != {'version', 'corpus_sha256', 'question_counts', 'claims', 'semantic_audit_sha256'}
+                or not isinstance(semantic['semantic_audit_sha256'], str)
+                or len(semantic['semantic_audit_sha256']) != 64
+                or any(c not in '0123456789abcdef' for c in semantic['semantic_audit_sha256'])):
+            raise ValueError('invalid semantic audit')
+        if (semantic['question_counts'] != questions or type(semantic['claims']) is not int
+                or semantic['claims'] != sum(questions.values())):
+            raise ValueError('incomplete semantic counts')
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ValueError('invalid or incomplete audit report') from exc
+
+
 def run(*, train_path, validation_path, manifest_path, manifest_sha256, output,
-        seed, batch_size, updates, learning_rate, device, audit_path, audit_sha256, edge_threshold=0.5):
+        seed, batch_size, updates, learning_rate, device, audit_path, audit_sha256,
+        identity_audit_path, identity_audit_sha256, expected_identities_sha256,
+        semantic_audit_path, semantic_audit_sha256, edge_threshold=0.5):
     """Run training-loss-selected checkpoints and validation controls, never test selection.
 
     This consumes no test file and has no test-stage mode. It does not itself
     establish corpus provenance, protect source bytes, or authorize a launch.
     """
-    train, validation, manifest, audit = map(_read, (train_path, validation_path, manifest_path, audit_path))
-    if digest(audit) != audit_sha256 or audit.get('version') != 'nl001-corpus-audit-v2' or audit.get('regeneration') != 'exact match using current generator and checker':
-        raise ValueError('corpus audit does not match independently retained digest')
-    comparison = audit.get('observed_view_audit')
-    if (not isinstance(comparison, dict) or type(comparison.get('comparisons')) is not int
-            or comparison['comparisons'] <= 0 or type(comparison.get('max_states_per_comparison')) is not int
-            or comparison['max_states_per_comparison'] <= 0):
-        raise ValueError('invalid corpus audit comparisons')
-    if (audit.get('manifest') != manifest or audit.get('manifest_sha256') != manifest_sha256
-            or audit.get('corpus_sha256') != manifest.get('corpus_sha256')):
-        raise ValueError('corpus audit and split manifest disagree')
+    train, validation, manifest, audit, identity, semantic = map(
+        _read, (train_path, validation_path, manifest_path, audit_path, identity_audit_path, semantic_audit_path))
+    _audit_gates(manifest, manifest_sha256, audit, audit_sha256, identity, identity_audit_sha256, expected_identities_sha256,
+                 semantic, semantic_audit_sha256)
     authenticate_split(train, 'train', manifest, manifest_sha256)
     authenticate_split(validation, 'validation', manifest, manifest_sha256)
+    for name, programs in (('train', train), ('validation', validation)):
+        if sum(len(v['questions']) for p in programs for v in p['variants']) != identity['question_counts'][name]:
+            raise ValueError('identity audit question counts disagree with split')
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
@@ -71,7 +131,9 @@ def run(*, train_path, validation_path, manifest_path, manifest_sha256, output,
     protocol = {'version': 'nl001-selection-integration-v1', 'manifest_sha256': manifest_sha256,
                 'seed': seed, 'batch_size': batch_size, 'updates': updates,
                 'learning_rate': learning_rate, 'device': device, 'edge_threshold': edge_threshold,
-                'audit_sha256': audit_sha256,
+                'audit_sha256': audit_sha256, 'identity_audit_sha256': identity_audit_sha256,
+                'expected_identities_sha256': expected_identities_sha256,
+                'semantic_audit_sha256': semantic_audit_sha256,
                 'checkpoint_selection': 'minimum full-training-set CE after updates 100, 200, ..., and final; B sums property/subject/object CE, excludes witness BCE; earliest tie', 'evaluation_split': 'validation'}
     _write(out / 'protocol.json', protocol)
     writer = ArtifactWriter(out)
@@ -131,11 +193,7 @@ def run(*, train_path, validation_path, manifest_path, manifest_sha256, output,
             saved_rows = _read(predictions)['predictions']
             details = independent['details']
             expected_details = report['details']
-            if (len(details) != len(saved_rows) or len(details) != len(expected_details) or
-                    any(detail.get('identity') != row['identity'] or
-                        {k: v for k, v in detail.items() if k != 'identity'} != expected
-                        for detail, row, expected in zip(details, saved_rows, expected_details))):
-                raise ValueError('independent per-claim audit disagrees with replay')
+            _check_audit_details(details, saved_rows, expected_details)
         if arm == 'B' and report['counts']['aligned_label_conflicts']:
             raise ValueError('replay found aligned label conflict')
         reports[arm] = {'training': training, 'inference_seconds': inference_seconds,

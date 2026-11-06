@@ -85,6 +85,15 @@ def save_split_artifacts(writer, corpus, manifest_sha256):
                         'scope': 'disposable exposed fixture; targets for validation/test are archival'})
 
 
+def register_checkpoints(writer, work, summary):
+    """Register the exact checkpoints selected by the calibration runner."""
+    for arm in ('A', 'B'):
+        checkpoint = work / 'selection' / arm / 'checkpoints' / ('best-' + arm + '.pt')
+        entry = writer.register_file('checkpoints', checkpoint, 'best-' + arm, format='torch-pt', arm=arm)
+        if entry['sha256'] != summary['reports'][arm]['training']['checkpoint_sha256']:
+            raise RuntimeError('root checkpoint digest mismatch: ' + arm)
+
+
 def main():
     raise RuntimeError('Calibration is blocked pending independent custody, semantic review, integration and resource gates')
     snapshot = snapshot_package(OUTPUT / 'nl001-source-snapshot')
@@ -123,11 +132,7 @@ def main():
         output=work / 'selection', seed=41001, batch_size=32, updates=100,
         learning_rate=0.001, device='cuda:0', audit_path=work / 'audit.json',
         audit_sha256=digest(audit), edge_threshold=0.5)
-    for arm in ('A', 'B'):
-        checkpoint = work / 'selection' / arm / 'checkpoints' / ('best-' + arm + '.json')
-        entry = writer.register_file('checkpoints', checkpoint, 'best-' + arm, format='json-state-dict', arm=arm)
-        if entry['sha256'] != summary['reports'][arm]['training']['checkpoint_sha256']:
-            raise RuntimeError('root checkpoint digest mismatch: ' + arm)
+    register_checkpoints(writer, work, summary)
     metrics = {'wall_seconds': time.perf_counter() - start}
     for arm in ('A', 'B'):
         training = summary['reports'][arm]['training']
