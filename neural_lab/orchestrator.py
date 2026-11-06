@@ -839,10 +839,12 @@ def main(argv=None) -> int:
             if not permitted:
                 write_handoff(args.repo, {"reason": reason, "updated_at": time.time()},
                               filename="pause-state.json")
-                print(json.dumps({"orchestrator": "paused", "reason": reason}), flush=True)
+                print(json.dumps({"orchestrator": "paused", "backend": args.backend,
+                                  "model": args.model, "reason": reason}), flush=True)
                 code = 1
             else:
-                print(json.dumps({"orchestrator": "starting", "model": args.model, "usage": reason}), flush=True)
+                print(json.dumps({"orchestrator": "starting", "backend": args.backend,
+                                  "model": args.model, "usage": reason}), flush=True)
                 try:
                     prompt = PROMPT
                     if args.backend == "pi":
@@ -860,7 +862,10 @@ def main(argv=None) -> int:
                 except Exception as exc:
                     outcome = {"exit_code": 1, "reason": "session error: " + type(exc).__name__}
                 code = outcome["exit_code"]
-                print(json.dumps({"orchestrator": "session_finished", **outcome}), flush=True)
+                # Backend+model on every outcome line (including the session
+                # error path above) so `docker logs` always names the harness.
+                print(json.dumps({"orchestrator": "session_finished", **outcome,
+                                  "backend": args.backend, "model": args.model}), flush=True)
             if args.once:
                 return 0 if permitted and code == 0 else 1
             stop.wait(args.poll_seconds)

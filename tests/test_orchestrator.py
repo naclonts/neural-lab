@@ -346,6 +346,63 @@ sys.stdout.flush()
             run.assert_not_called()
             self.assertTrue((Path(root) / ".neural-lab" / "notes").is_dir())
 
+    def test_paused_log_line_names_backend_and_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.rpc_snapshot", return_value={
+                "ordinaryUsageAllowed": True,
+                "rateLimits": {"primary": {"usedPercent": 75}},
+            }):
+                with patch("sys.stdout", new=io.StringIO()) as out:
+                    main(["--model", "verified-model", "--repo", root, "--once"])
+            record = json.loads(out.getvalue().strip().splitlines()[-1])
+            self.assertEqual(record["orchestrator"], "paused")
+            self.assertEqual(record["backend"], "codex")
+            self.assertEqual(record["model"], "verified-model")
+
+    def test_starting_and_finished_log_lines_name_backend_and_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.rpc_snapshot", return_value={
+                "ordinaryUsageAllowed": True,
+                "rateLimitsByLimitId": {
+                    "codex": {"primary": {"usedPercent": 10}, "secondary": {"usedPercent": 5}},
+                },
+            }):
+                with patch("neural_lab.orchestrator.run_session",
+                           return_value={"exit_code": 0, "reason": "ok"}):
+                    with patch("sys.stdout", new=io.StringIO()) as out:
+                        code = main(["--backend", "codex", "--model", "gpt-6.1-sol",
+                                     "--repo", root, "--once"])
+            self.assertEqual(code, 0)
+            lines = [json.loads(line) for line in out.getvalue().strip().splitlines()]
+            starting = next(r for r in lines if r["orchestrator"] == "starting")
+            self.assertEqual(starting["backend"], "codex")
+            self.assertEqual(starting["model"], "gpt-6.1-sol")
+            finished = next(r for r in lines if r["orchestrator"] == "session_finished")
+            self.assertEqual(finished["backend"], "codex")
+            self.assertEqual(finished["model"], "gpt-6.1-sol")
+            self.assertEqual(finished["exit_code"], 0)
+
+    def test_session_error_outcome_log_line_names_backend_and_model(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("neural_lab.orchestrator.rpc_snapshot", return_value={
+                "ordinaryUsageAllowed": True,
+                "rateLimitsByLimitId": {
+                    "codex": {"primary": {"usedPercent": 10}, "secondary": {"usedPercent": 5}},
+                },
+            }):
+                with patch("neural_lab.orchestrator.run_session",
+                           side_effect=RuntimeError("boom")):
+                    with patch("sys.stdout", new=io.StringIO()) as out:
+                        code = main(["--backend", "codex", "--model", "gpt-6.1-sol",
+                                     "--repo", root, "--once"])
+            self.assertEqual(code, 1)
+            lines = [json.loads(line) for line in out.getvalue().strip().splitlines()]
+            finished = next(r for r in lines if r["orchestrator"] == "session_finished")
+            self.assertEqual(finished["backend"], "codex")
+            self.assertEqual(finished["model"], "gpt-6.1-sol")
+            self.assertEqual(finished["exit_code"], 1)
+            self.assertIn("session error", finished["reason"])
+
 
 @unittest.skipUnless(os.environ.get("NEURAL_LAB_CODEX_PROTOCOL_TESTS") == "1", "Real Codex CLI protocol opt-in")
 class RealProtocolTests(unittest.TestCase):
