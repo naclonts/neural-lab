@@ -54,6 +54,14 @@ counts. Audit the checker against an independent exhaustive small-graph oracle
 before scaling. Large codebases remain a later extraction/generalization test,
 not an initial promise of arbitrary program correctness.
 
+GPU pipeline policy: keep the RTX 2070 continuously supplied with validated
+work. As soon as a job is enqueued, and while it runs, begin drafting the next
+candidate offline. Maintain at least one fully validated candidate — corpus-
+audited, independently reviewed, digest-pinned — waiting in the queue at all
+times; if the queue is empty, preparing and validating the next candidate is
+the top priority. Never enqueue an unvalidated candidate and never pad or
+extend GPU runtime merely to keep the device busy.
+
 This objective supersedes older architecture-search priorities in experiment
 summaries, queued hypotheses, and handoff notes. Preserve historical results;
 do not launch new generic MLP/CIFAR/vision campaigns unless they directly test a

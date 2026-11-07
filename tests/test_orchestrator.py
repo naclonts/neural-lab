@@ -15,7 +15,9 @@ import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
-from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_ok,
+from neural_lab.research_direction import RESEARCH_DIRECTION
+
+from neural_lab.orchestrator import (AppServer, PiSession, PROMPT, budget_ok, capacity_ok,
                                      context_fraction, main, pi_provider_error,
                                      pi_usage, record_pi_budget,
                                      resolve_pi_context_window, rpc_snapshot,
@@ -23,6 +25,12 @@ from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_o
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_research_direction_includes_gpu_pipeline_policy(self):
+        for keyword in ('GPU pipeline policy', 'RTX 2070', 'digest-pinned',
+                        'Never enqueue an unvalidated candidate'):
+            self.assertIn(keyword, RESEARCH_DIRECTION)
+        self.assertIn(RESEARCH_DIRECTION, PROMPT)
+
     def test_catalog_diagnostics_store_only_fixed_safe_categories(self):
         server = AppServer.__new__(AppServer)
         server.model_catalog_error = None
