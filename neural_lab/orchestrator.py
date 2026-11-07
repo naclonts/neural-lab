@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,10 @@ from neural_lab.research_direction import RESEARCH_DIRECTION
 CONTEXT_HANDOFF_REASON = "context exceeded 60% of reported window"
 CONTEXT_HANDOFF_FRACTION = 0.6
 PI_AUTH_ERROR = "pi could not authenticate with the configured provider"
+PI_PROVIDER_ERROR_CATEGORY = "provider error"
+FAILED_SESSION_BACKOFF_INITIAL_SECONDS = 60
+FAILED_SESSION_BACKOFF_CAP_SECONDS = 1800
+FAILED_SESSION_BACKOFF_SLICE_SECONDS = 1.0
 
 PI_ADDENDUM = """
 
@@ -653,6 +658,33 @@ def resolve_pi_context_window(model: str) -> int | None:
     return window if type(window) is int and window > 0 else None
 
 
+def pi_provider_error(message: dict) -> str | None:
+    """Return a sanitized provider-error category for a pi event, or None.
+
+    pi 1.5.0 handles a provider-level HTTP failure by synthesizing an
+    assistant message with stopReason "error" and errorMessage
+    "<status>: <provider body>", emitting only message_start/message_end/
+    turn_end/agent_end and no message_update. The raw text can contain
+    provider strings or secrets, so only the fixed category plus a short
+    sha256 fingerprint of the raw message (for correlation) is returned.
+    """
+    embedded = message.get("message")
+    candidates = [embedded] if isinstance(embedded, dict) else []
+    candidates.append(message)
+    for candidate in candidates:
+        if candidate.get("role") != "assistant":
+            continue
+        if candidate.get("stopReason") != "error" and not candidate.get("errorMessage"):
+            continue
+        raw = candidate.get("errorMessage")
+        fingerprint = ""
+        if isinstance(raw, str) and raw:
+            fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+            return f"{PI_PROVIDER_ERROR_CATEGORY} (fp={fingerprint})"
+        return PI_PROVIDER_ERROR_CATEGORY
+    return None
+
+
 def pi_usage(message: dict) -> tuple[int | None, int | None]:
     """Read reported token usage and any event-provided context window.
 
@@ -675,6 +707,12 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
     # pi 1.5.0 RPC events never carry usage.contextWindow, so resolve the
     # window once from the env override or the pi model catalog up front.
     resolved_window = resolve_pi_context_window(model)
+    if resolved_window is None:
+        # A cold model catalog kills the session via the conservative gate
+        # below; make that self-explaining in docker logs.
+        print(json.dumps({"orchestrator": "warning",
+                          "reason": "pi context window unresolved at session start",
+                          "model": model}), flush=True)
     stop = stop or threading.Event()
     try:
         old_handoff = previous_handoff(repo)
@@ -735,6 +773,14 @@ def run_pi_session(model: str, repo: Path, prompt: str, *, stop: threading.Event
             if method == "response" and message.get("id") == prompt_id and not message.get("success"):
                 reason = reason or getattr(session, "auth_error", None) or "pi rejected the prompt command"
             elif method in ("message_update", "message_end", "turn_end"):
+                # Provider-level HTTP failures surface as synthesized assistant
+                # messages with stopReason "error" and no top-level usage, so
+                # they must be classified before the usage-less skip below or
+                # they fall through to an opaque "pi session settled".
+                provider_error = pi_provider_error(message)
+                if provider_error is not None:
+                    reason = reason or provider_error
+                    continue
                 if message.get("usage") is None:
                     # pi 1.5.0 emits message_update/message_end/turn_end events
                     # for system and user transcript messages that carry no
@@ -882,6 +928,8 @@ def main(argv=None) -> int:
     notes = args.repo / ".neural-lab" / "notes"
     notes.mkdir(parents=True, exist_ok=True, mode=0o700)
     stop = threading.Event()
+    consecutive_failures = 0
+    paused = False
     prior_handlers = {name: signal.getsignal(name) for name in (signal.SIGINT, signal.SIGTERM)}
     for name in prior_handlers:
         signal.signal(name, lambda *_: stop.set())
@@ -900,12 +948,14 @@ def main(argv=None) -> int:
             if stop.is_set():
                 break
             if not permitted:
+                paused = True
                 write_handoff(args.repo, {"reason": reason, "updated_at": time.time()},
                               filename="pause-state.json")
                 print(json.dumps({"orchestrator": "paused", "backend": args.backend,
                                   "model": args.model, "reason": reason}), flush=True)
                 code = 1
             else:
+                paused = False
                 print(json.dumps({"orchestrator": "starting", "backend": args.backend,
                                   "model": args.model, "usage": reason}), flush=True)
                 try:
@@ -931,7 +981,26 @@ def main(argv=None) -> int:
                                   "backend": args.backend, "model": args.model}), flush=True)
             if args.once:
                 return 0 if permitted and code == 0 else 1
-            stop.wait(args.poll_seconds)
+            if code == 0:
+                consecutive_failures = 0
+                stop.wait(args.poll_seconds)
+            elif not paused:
+                # A failed session backs the next poll off exponentially (60s,
+                # doubling per consecutive failure, capped) so a rate-limited
+                # or broken provider does not burn one budget session per
+                # poll interval. Interruptible in slices via the stop event;
+                # nothing is logged for the sleep itself.
+                consecutive_failures += 1
+                delay = min(FAILED_SESSION_BACKOFF_INITIAL_SECONDS * 2 ** (consecutive_failures - 1),
+                            FAILED_SESSION_BACKOFF_CAP_SECONDS)
+                deadline = time.monotonic() + delay
+                while not stop.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    stop.wait(min(FAILED_SESSION_BACKOFF_SLICE_SECONDS, remaining))
+            else:
+                stop.wait(args.poll_seconds)
         write_handoff(args.repo, {"reason": "shutdown requested", "updated_at": time.time()},
                       filename="pause-state.json")
         return 0

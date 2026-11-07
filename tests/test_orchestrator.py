@@ -1,3 +1,4 @@
+import hashlib
 import json
 import io
 from collections import deque
@@ -15,7 +16,8 @@ from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
 from neural_lab.orchestrator import (AppServer, PiSession, budget_ok, capacity_ok,
-                                     context_fraction, main, pi_usage, record_pi_budget,
+                                     context_fraction, main, pi_provider_error,
+                                     pi_usage, record_pi_budget,
                                      resolve_pi_context_window, rpc_snapshot,
                                      run_pi_session, run_session)
 
@@ -1060,6 +1062,237 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual(outcome["reason"], "context exceeded 60% of reported window")
         self.assertIn("abort", [call[0] for call in fake.calls])
         self.assertEqual(outcome["context_fraction"], 0.601)
+
+
+class PiResilienceTests(unittest.TestCase):
+    """Regression coverage for pi provider-error visibility, failed-session
+    backoff, and the cold-catalog warning (pi 1.5.0 resilience fixes)."""
+
+    @contextmanager
+    def pi_window_env(self, catalog_root=None, override=None,
+                      model="test-provider/pi-model", window=1000):
+        saved = {key: os.environ.pop(key, None)
+                 for key in ("PI_CODING_AGENT_DIR", "NEURAL_LAB_PI_CONTEXT_WINDOW")}
+        try:
+            if catalog_root is not None:
+                PiTransportTests.write_pi_catalog(catalog_root, model=model, window=window)
+                os.environ["PI_CODING_AGENT_DIR"] = str(catalog_root)
+            if override is not None:
+                os.environ["NEURAL_LAB_PI_CONTEXT_WINDOW"] = override
+            yield
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    @staticmethod
+    def provider_error_transcript(error_message):
+        """Byte-faithful event shapes captured from a real pi 1.5.0 session
+        whose provider returned HTTP 429 (/tmp/pi-repro/err429.stdout):
+        only message_start/message_end/turn_end + agent_settled, with the
+        synthesized assistant message carrying stopReason "error" and NO
+        top-level usage on any event."""
+        assistant = {"role": "assistant", "content": [], "api": "openai-completions",
+                     "provider": "fireworks", "model": "accounts/fireworks/models/glm-5p3-flash",
+                     "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
+                               "totalTokens": 0,
+                               "cost": {"input": 0, "output": 0, "cacheRead": 0,
+                                        "cacheWrite": 0, "total": 0}},
+                     "stopReason": "error", "timestamp": 1794027211200,
+                     "errorMessage": error_message, "durationMs": 32,
+                     "thinkingLevel": "high"}
+        return [
+            {"type": "message_start", "message": assistant},
+            {"type": "message_end", "message": assistant},
+            {"type": "turn_end", "message": assistant, "toolResults": []},
+            {"type": "agent_settled", "aborted": False},
+        ]
+
+    class FakeErrorSession:
+        def __init__(self, messages):
+            self.calls = []
+            self.messages = messages
+
+        def send(self, record_type, fields=None):
+            self.calls.append((record_type, fields))
+            return "neural-lab-1"
+
+        def notify(self, record_type, fields=None):
+            self.calls.append((record_type, fields))
+
+        def receive(self, timeout):
+            return self.messages.pop(0) if self.messages else None
+
+        def close(self):
+            pass
+
+    def test_run_pi_session_surfaces_sanitized_provider_error(self):
+        error_message = '429: {"code":429,"message":"mock 429: quota exceeded for model"}'
+        fake = self.FakeErrorSession(self.provider_error_transcript(error_message))
+        fingerprint = hashlib.sha256(error_message.encode("utf-8")).hexdigest()[:12]
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                outcome = run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(outcome["exit_code"], 1)
+        self.assertEqual(outcome["reason"], f"provider error (fp={fingerprint})")
+        # The raw provider error text must never leak into the outcome.
+        self.assertNotIn("429", outcome["reason"])
+        self.assertNotIn("quota", outcome["reason"])
+        self.assertIsNone(outcome["last_tokens"])
+        self.assertFalse(outcome["context_window_verified"])
+        # Abort semantics unchanged: the controller still aborts with the
+        # bounded grace instead of letting the session linger.
+        self.assertIn("abort", [call[0] for call in fake.calls])
+
+    def test_pi_provider_error_detection_handles_event_level_fields(self):
+        raw = "500: internal provider detail"
+        fingerprint = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        # Fields directly on the event (defensive shape) are detected too.
+        event = {"type": "message_update", "role": "assistant",
+                 "stopReason": "error", "errorMessage": raw}
+        self.assertEqual(pi_provider_error(event), f"provider error (fp={fingerprint})")
+        # An error with no message text degrades to the bare category.
+        self.assertEqual(pi_provider_error({"role": "assistant", "stopReason": "error"}),
+                         "provider error")
+        self.assertEqual(pi_provider_error({"role": "assistant", "errorMessage": raw}),
+                         f"provider error (fp={fingerprint})")
+        # Normal assistant messages never match.
+        self.assertIsNone(pi_provider_error({"role": "assistant", "stopReason": "stop"}))
+        self.assertIsNone(pi_provider_error({"role": "user", "stopReason": "error"}))
+        self.assertIsNone(pi_provider_error({"type": "agent_settled", "aborted": False}))
+
+    def test_run_pi_session_warns_when_context_window_unresolved(self):
+        fake = self.FakeErrorSession([{"type": "agent_settled", "aborted": False}])
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(None), redirect_stdout(stdout), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                run_pi_session("test-provider/pi-model", Path(root), "test")
+        warnings = [json.loads(line) for line in stdout.getvalue().splitlines()
+                    if line.strip()
+                    and json.loads(line).get("reason") == "pi context window unresolved at session start"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["orchestrator"], "warning")
+        self.assertEqual(warnings[0]["model"], "test-provider/pi-model")
+
+        # A resolved window emits no warning.
+        fake = self.FakeErrorSession([{"type": "agent_settled", "aborted": False}])
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as root:
+            with self.pi_window_env(root), redirect_stdout(stdout), \
+                    patch("neural_lab.orchestrator.PiSession", return_value=fake):
+                run_pi_session("test-provider/pi-model", Path(root), "test")
+        self.assertEqual(stdout.getvalue(), "")
+
+
+class FakeOrchestratorClock:
+    def __init__(self, start=1_000_000.0):
+        self.now = start
+
+    def monotonic(self):
+        return self.now
+
+
+class FakeOrchestratorStopEvent:
+    """threading.Event stand-in for main(): wait() advances a fake clock
+    instead of sleeping, so backoff schedules are testable with no delays,
+    and it can simulate SIGTERM arriving mid-wait."""
+
+    def __init__(self, clock, stop_at=None, set_on_wait=None):
+        self.clock = clock
+        self.waits = []
+        self.stop_at = stop_at
+        self.set_on_wait = set_on_wait
+        self._set = False
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        self.clock.now += timeout or 0.0
+        if self.set_on_wait is not None and len(self.waits) >= self.set_on_wait:
+            self._set = True
+        if self.stop_at is not None and self.clock.now >= self.stop_at:
+            self._set = True
+        return self._set
+
+
+class MainBackoffTests(unittest.TestCase):
+    """Failed-session exponential backoff in main() for the pi backend."""
+
+    def run_main(self, clock, stop_event, outcomes):
+        calls = []
+
+        def fake_run(model, repo, prompt, **kwargs):
+            calls.append(len(stop_event.waits))
+            return outcomes[len(calls) - 1]
+
+        fake_time = SimpleNamespace(monotonic=clock.monotonic, time=time.time)
+        with tempfile.TemporaryDirectory() as root:
+            budget = Path(root) / ".neural-lab" / "notes" / "pi-budget.json"
+            budget.parent.mkdir(parents=True)
+            budget.write_text(json.dumps(
+                {"sessions": 0, "active_seconds": 0, "window_start": time.time()}))
+            with patch("neural_lab.orchestrator.threading.Event", return_value=stop_event), \
+                    patch("neural_lab.orchestrator.time", fake_time), \
+                    patch("neural_lab.orchestrator.run_pi_session", side_effect=fake_run):
+                code = main(["--backend", "pi", "--model", "test-provider/pi-model",
+                             "--repo", root, "--poll-seconds", "300"])
+        calls.append(len(stop_event.waits))
+        return code, calls
+
+    def iteration_sleeps(self, stop_event, calls):
+        sleeps = []
+        for i in range(len(calls) - 1):
+            sleeps.append(sum(stop_event.waits[calls[i]:calls[i + 1]]))
+        return sleeps
+
+    def test_consecutive_failures_back_off_exponentially_with_cap(self):
+        clock = FakeOrchestratorClock()
+        # 60+120+240+480+960+1800+1800 = 5460 fake seconds of backoff, then stop.
+        stop_event = FakeOrchestratorStopEvent(clock, stop_at=clock.now + 5460)
+        outcome = {"exit_code": 1, "reason": "provider error"}
+        code, calls = self.run_main(clock, stop_event, [outcome] * 7)
+        self.assertEqual(code, 0)  # clean shutdown, never hung
+        self.assertEqual([round(total) for total in self.iteration_sleeps(stop_event, calls)],
+                         [60, 120, 240, 480, 960, 1800, 1800])
+        # The backoff sleep is sliced so the stop event is honored promptly.
+        self.assertLessEqual(max(stop_event.waits), 1.0)
+
+    def test_success_resets_backoff_and_normal_poll_continues(self):
+        clock = FakeOrchestratorClock()
+        # fail (60s backoff) -> success (normal 300s poll) -> fail (60s again).
+        stop_event = FakeOrchestratorStopEvent(clock, stop_at=clock.now + 60 + 300 + 60)
+        outcomes = [{"exit_code": 1, "reason": "provider error"},
+                    {"exit_code": 0, "reason": "pi session settled"},
+                    {"exit_code": 1, "reason": "provider error"}]
+        code, calls = self.run_main(clock, stop_event, outcomes)
+        self.assertEqual(code, 0)
+        sleeps = self.iteration_sleeps(stop_event, calls)
+        self.assertEqual([round(total) for total in sleeps], [60, 300, 60])
+        # Successes use the plain --poll-seconds wait; failures use slices.
+        self.assertEqual(stop_event.waits[calls[1]:calls[2]], [300])
+        self.assertGreater(len(stop_event.waits[calls[0]:calls[1]]), 1)
+        self.assertGreater(len(stop_event.waits[calls[2]:calls[3]]), 1)
+
+    def test_stop_event_interrupts_the_backoff_sleep(self):
+        clock = FakeOrchestratorClock()
+        # SIGTERM arrives during the first backoff slice: the sleep must end
+        # after that slice instead of running the full 60 seconds.
+        stop_event = FakeOrchestratorStopEvent(clock, set_on_wait=1)
+        outcome = {"exit_code": 1, "reason": "provider error"}
+        code, calls = self.run_main(clock, stop_event, [outcome])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(stop_event.waits), 1)
+        self.assertLessEqual(stop_event.waits[0], 1.0)
+        self.assertLess(clock.now - 1_000_000.0, 60)
 
 
 if __name__ == "__main__":
