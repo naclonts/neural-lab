@@ -76,6 +76,38 @@ def isomorphic(left, right, *, max_states=1_000_000, state_callback=None):
     return visit(0)
 
 
+def node_sizes(nodes, seeds):
+    """Resolve per-seed program sizes; a plain int keeps uniform v1 sizing.
+
+    A mapping assigns each generator seed its own program size within the same
+    10..50 bound, so one corpus can span several node sizes. Mapping keys may
+    be ints or ASCII digit strings so a JSON round trip of the stored config
+    regenerates an identical payload; the mapping is stored as passed.
+    """
+    if type(nodes) is int:
+        if not 10 <= nodes <= 50:
+            raise ValueError("nodes must be an integer between 10 and 50")
+        return None
+    if not isinstance(nodes, dict) or not nodes:
+        raise ValueError("nodes must be an integer between 10 and 50 or a per-seed mapping")
+    sizes = {}
+    for key, value in nodes.items():
+        if type(key) is int:
+            seed = key
+        elif isinstance(key, str) and key.isascii() and key.isdigit():
+            seed = int(key)
+        else:
+            raise ValueError("per-seed node mapping keys must be generator seeds")
+        if type(value) is not int or not 10 <= value <= 50:
+            raise ValueError("per-seed node counts must be integers between 10 and 50")
+        if seed in sizes:
+            raise ValueError("duplicate seed in per-seed node mapping")
+        sizes[seed] = value
+    if set(sizes) != set(seeds):
+        raise ValueError("per-seed node mapping must cover exactly the generator seeds")
+    return sizes
+
+
 def make_splits(split_seeds, *, nodes=10, edge_probability=0.08, missing_fraction=0.25):
     """Build exact auditable payload; reject seed reuse and any cross-split iso.
 
@@ -85,13 +117,12 @@ def make_splits(split_seeds, *, nodes=10, edge_probability=0.08, missing_fractio
     """
     if set(split_seeds) != set(TEMPLATES):
         raise ValueError("train, validation and test seed lists are required")
-    if type(nodes) is not int or not 10 <= nodes <= 50:
-        raise ValueError("nodes must be an integer between 10 and 50")
     if any(not isinstance(v, (list, tuple)) or not v for v in split_seeds.values()):
         raise ValueError("each split needs at least one seed")
     seeds = [seed for values in split_seeds.values() for seed in values]
     if any(type(s) is not int for s in seeds) or len(seeds) != len(set(seeds)):
         raise ValueError("generator seeds must be distinct integers")
+    sizes = node_sizes(nodes, seeds)
     if (isinstance(edge_probability, bool) or not 0 < edge_probability < 1 or
         isinstance(missing_fraction, bool) or not 0 < missing_fraction <= 1):
         raise ValueError("probability must be in (0,1), missing fraction in (0,1]")
@@ -100,12 +131,13 @@ def make_splits(split_seeds, *, nodes=10, edge_probability=0.08, missing_fractio
         graphs[split], programs[split] = [], []
         for seed in split_seeds[split]:
             rng = random.Random(seed)
+            size = nodes if sizes is None else sizes[seed]
             # Split-specific names ensure renamed-symbol evaluation across splits.
-            names = tuple(f"{split[0]}{seed}_{i}" for i in range(nodes))
+            names = tuple(f"{split[0]}{seed}_{i}" for i in range(size))
             edges = frozenset((a, b) for a in names for b in names if rng.random() < edge_probability)
             if not edges:
                 raise ValueError(f"seed {seed} generated no edge to remove; choose another seed")
-            source = f"{VERSION}:split={split}:seed={seed}:nodes={nodes}:p={edge_probability}"
+            source = f"{VERSION}:split={split}:seed={seed}:nodes={size}:p={edge_probability}"
             full = Graph(names, edges, True, source)
             for previous in graphs.values():
                 # Same-split duplicates are harmless to isolation; compare all

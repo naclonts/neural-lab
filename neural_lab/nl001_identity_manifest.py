@@ -14,15 +14,38 @@ def _digest(value):
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _node_sizes(nodes, seeds):
+    """Mirror nl001_data.node_sizes without importing the generator."""
+    if type(nodes) is int:
+        if not 10 <= nodes <= 50:
+            raise ValueError('invalid nodes')
+        return None
+    if not isinstance(nodes, dict) or not nodes:
+        raise ValueError('invalid nodes')
+    sizes = {}
+    for key, value in nodes.items():
+        if type(key) is int:
+            seed = key
+        elif isinstance(key, str) and key.isascii() and key.isdigit():
+            seed = int(key)
+        else:
+            raise ValueError('invalid nodes')
+        if type(value) is not int or not 10 <= value <= 50 or seed in sizes:
+            raise ValueError('invalid nodes')
+        sizes[seed] = value
+    if set(sizes) != set(seeds):
+        raise ValueError('invalid nodes')
+    return sizes
+
+
 def construct(split_seeds, *, nodes, edge_probability, missing_fraction, per_stratum, sampling_seed):
     if not isinstance(split_seeds, dict) or set(split_seeds) != {'train', 'validation', 'test'}:
         raise ValueError('invalid splits')
-    if type(nodes) is not int or not 10 <= nodes <= 50:
-        raise ValueError('invalid nodes')
     seeds = [s for split in ('train', 'validation', 'test') for s in split_seeds[split]]
     if (any(not isinstance(split_seeds[s], (list, tuple)) or not split_seeds[s] for s in split_seeds)
             or any(type(s) is not int for s in seeds) or len(seeds) != len(set(seeds))):
         raise ValueError('invalid seeds')
+    sizes = _node_sizes(nodes, seeds)
     if (isinstance(edge_probability, bool) or not 0 < edge_probability < 1
             or isinstance(missing_fraction, bool) or not 0 < missing_fraction <= 1
             or type(per_stratum) is not int or per_stratum <= 0 or type(sampling_seed) is not int):
@@ -31,7 +54,8 @@ def construct(split_seeds, *, nodes, edge_probability, missing_fraction, per_str
     for split in ('train', 'validation', 'test'):
         result[split] = []
         for seed in split_seeds[split]:
-            names = [f'{split[0]}{seed}_{i}' for i in range(nodes)]
+            size = nodes if sizes is None else sizes[seed]
+            names = [f'{split[0]}{seed}_{i}' for i in range(size)]
             rng = random.Random(seed)
             full = {(a, b) for a in names for b in names if rng.random() < edge_probability}
             if not full:
@@ -60,7 +84,7 @@ def construct(split_seeds, *, nodes, edge_probability, missing_fraction, per_str
                         groups.setdefault((view, prop, label), []).append((a, b))
             sample_rng = random.Random(sampling_seed + seed)
             identities = []
-            source = f'nl001-whole-program-v1:split={split}:seed={seed}:nodes={nodes}:p={edge_probability}'
+            source = f'nl001-whole-program-v1:split={split}:seed={seed}:nodes={size}:p={edge_probability}'
             positions = {name: i for i, name in enumerate(names)}
             for view, prop, label in sorted(groups):
                 pairs = groups[(view, prop, label)][:]
