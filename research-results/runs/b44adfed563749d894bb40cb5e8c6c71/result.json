@@ -1,0 +1,19 @@
+{
+  "metrics": {
+    "screening_criterion_met": 0,
+    "relational_mean_dev_ce": 0.37513411299005384,
+    "relational_mean_dev_accuracy": 0.7474822998046875,
+    "constant_pair_mean_dev_ce": 0.38146992356632836,
+    "constant_pair_mean_dev_accuracy": 0.7418975830078125,
+    "centered_DS_mean_dev_ce": 0.37954435487336013,
+    "centered_DS_mean_dev_accuracy": 0.741363525390625,
+    "fixed_RBF_mean_dev_ce": 0.3144588674476836,
+    "fixed_RBF_mean_dev_accuracy": 0.858673095703125,
+    "centered_aug_dense_mean_dev_ce": 0.6292248026002198,
+    "centered_aug_dense_mean_dev_accuracy": 0.6021728515625,
+    "training_seconds": 356.4435710960097,
+    "peak_cuda_memory_bytes": 468186624,
+    "elapsed_seconds": 459.68870858699665
+  },
+  "summary": "Frozen synthetic CUDA relational campaign: five arms, two initialization seeds, fixed 8 epochs. Exact data/schedules and all-observed training-CE selected weights retained; independent final dev endpoints; no test/tuning/promotion."
+}

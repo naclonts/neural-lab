@@ -1,0 +1,7 @@
+# Independent audit utility review — 2026-10-31
+
+**Finding:** The implementation note overstates completion-gate test coverage: the committed test changes only the second (long) job's status, not either job. This is a test/documentation gap, not an observed gate defect. The gate loops over both exact IDs and runs before either output is accessed. I independently exercised queued, running, and failed status for each job with synthetic temporary databases, replacing the JSON reader with a function that raises on any attempted read; all six cases were refused at the completion gate. The source and other output accesses also occur after the gate by static inspection.
+
+The checkpoint change rejects repeated references across both roles and all records, and requires all manifest checkpoint paths to be consumed. Combined with the existing path uniqueness check and 16-entry/8-record requirements, this enforces distinct file paths for each role. It does not establish semantic role, selected minimum, tensor validity, or authenticity; the separate detailed audit remains necessary.
+
+Validation: `python3 .neural-lab/notes/test-audit-localgate-current.py` passed; the additional six-case synthetic gate check passed. Tests used temporary fixtures and frozen candidate source only; no active job status, output, or endpoint was read and no queue or training action was taken. Actual successful-output schema remains untested.

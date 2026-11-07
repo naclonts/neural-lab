@@ -1,0 +1,557 @@
+{
+  "best_checkpoint_sha256": "cace1935dec9c8bf94ca0b09f6d60d51a14acc33f72f19c1c959ee9d8983721c",
+  "best_selection": {
+    "metric": "training_cross_entropy",
+    "mode": "min",
+    "observations": 100,
+    "observed_steps": [
+      2000,
+      4000,
+      6000,
+      8000,
+      10000,
+      12000,
+      14000,
+      16000,
+      18000,
+      20000,
+      22000,
+      24000,
+      26000,
+      28000,
+      30000,
+      32000,
+      34000,
+      36000,
+      38000,
+      40000,
+      42000,
+      44000,
+      46000,
+      48000,
+      50000,
+      52000,
+      54000,
+      56000,
+      58000,
+      60000,
+      62000,
+      64000,
+      66000,
+      68000,
+      70000,
+      72000,
+      74000,
+      76000,
+      78000,
+      80000,
+      82000,
+      84000,
+      86000,
+      88000,
+      90000,
+      92000,
+      94000,
+      96000,
+      98000,
+      100000,
+      102000,
+      104000,
+      106000,
+      108000,
+      110000,
+      112000,
+      114000,
+      116000,
+      118000,
+      120000,
+      122000,
+      124000,
+      126000,
+      128000,
+      130000,
+      132000,
+      134000,
+      136000,
+      138000,
+      140000,
+      142000,
+      144000,
+      146000,
+      148000,
+      150000,
+      152000,
+      154000,
+      156000,
+      158000,
+      160000,
+      162000,
+      164000,
+      166000,
+      168000,
+      170000,
+      172000,
+      174000,
+      176000,
+      178000,
+      180000,
+      182000,
+      184000,
+      186000,
+      188000,
+      190000,
+      192000,
+      194000,
+      196000,
+      198000,
+      200000
+    ],
+    "scope": "full training-set CE in fixed order, evaluation mode, after every 2000 updates and the final update; B sums property, subject, object CE and excludes witness BCE; earliest tie",
+    "step": 160000,
+    "value": 0.0
+  },
+  "config": {
+    "arm": "B",
+    "batch_size": 32,
+    "corpus_sha256": "5cf328feeef975bb026a5a9a3032ea58d53e2ca1bc7330e7bf8b3708fcc6200d",
+    "device": "cuda:0",
+    "embedding": 32,
+    "hidden": 128,
+    "lr_schedule": {
+      "decay": "cosine",
+      "min_lr_fraction": 0.1,
+      "peak": 0.001,
+      "warmup_updates": 500
+    },
+    "optimizer": "AdamW",
+    "optimizer_settings": {
+      "amsgrad": false,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "lr": 0.001,
+      "weight_decay": 0.01
+    },
+    "seed": 41002,
+    "updates": 200000,
+    "version": "nl001-substantive-session40-v1"
+  },
+  "conservative_updates_per_second": 25.0,
+  "example_exposures": 6387454,
+  "examples": 8655,
+  "expected_updates_per_second": 43.7,
+  "final_checkpoint_sha256": "068ef048e0835db9d5f8d5f808061312ead949eb328592d5a3cca1baef916b55",
+  "final_losses_tail_mean": 2.4660350274735566e-09,
+  "parameters": 936843,
+  "peak_allocated_bytes": 87154176,
+  "peak_reserved_bytes": 96468992,
+  "selection_observations": [
+    {
+      "step": 2000,
+      "training_cross_entropy": 0.0034603364424468496
+    },
+    {
+      "step": 4000,
+      "training_cross_entropy": 0.0006801346285862645
+    },
+    {
+      "step": 6000,
+      "training_cross_entropy": 0.05227079966374466
+    },
+    {
+      "step": 8000,
+      "training_cross_entropy": 5.362853899648965e-05
+    },
+    {
+      "step": 10000,
+      "training_cross_entropy": 3.4033724529465365e-05
+    },
+    {
+      "step": 12000,
+      "training_cross_entropy": 0.0030797341963518013
+    },
+    {
+      "step": 14000,
+      "training_cross_entropy": 1.962322521396985e-05
+    },
+    {
+      "step": 16000,
+      "training_cross_entropy": 9.190660775921759e-06
+    },
+    {
+      "step": 18000,
+      "training_cross_entropy": 0.000271179253116708
+    },
+    {
+      "step": 20000,
+      "training_cross_entropy": 1.1236624405422353e-05
+    },
+    {
+      "step": 22000,
+      "training_cross_entropy": 8.122067272035149e-06
+    },
+    {
+      "step": 24000,
+      "training_cross_entropy": 0.0001106956867451759
+    },
+    {
+      "step": 26000,
+      "training_cross_entropy": 9.521752009743845e-06
+    },
+    {
+      "step": 28000,
+      "training_cross_entropy": 4.630422763008802e-06
+    },
+    {
+      "step": 30000,
+      "training_cross_entropy": 0.00984180017687189
+    },
+    {
+      "step": 32000,
+      "training_cross_entropy": 1.1323702744912982e-05
+    },
+    {
+      "step": 34000,
+      "training_cross_entropy": 4.942858972440759e-06
+    },
+    {
+      "step": 36000,
+      "training_cross_entropy": 2.1741799489506776e-06
+    },
+    {
+      "step": 38000,
+      "training_cross_entropy": 1.813027536533963e-05
+    },
+    {
+      "step": 40000,
+      "training_cross_entropy": 7.68159464736562e-06
+    },
+    {
+      "step": 42000,
+      "training_cross_entropy": 3.6485755461527557e-06
+    },
+    {
+      "step": 44000,
+      "training_cross_entropy": 1.6535588083471302e-06
+    },
+    {
+      "step": 46000,
+      "training_cross_entropy": 1.5143794846734316e-05
+    },
+    {
+      "step": 48000,
+      "training_cross_entropy": 7.30315780909736e-06
+    },
+    {
+      "step": 50000,
+      "training_cross_entropy": 3.6539669447129587e-06
+    },
+    {
+      "step": 52000,
+      "training_cross_entropy": 1.6625462077066806e-06
+    },
+    {
+      "step": 54000,
+      "training_cross_entropy": 1.3719075460721324e-05
+    },
+    {
+      "step": 56000,
+      "training_cross_entropy": 6.6783329549903805e-06
+    },
+    {
+      "step": 58000,
+      "training_cross_entropy": 3.2540570683642996e-06
+    },
+    {
+      "step": 60000,
+      "training_cross_entropy": 1.4726126381243635e-06
+    },
+    {
+      "step": 62000,
+      "training_cross_entropy": 1.3248252138312835e-05
+    },
+    {
+      "step": 64000,
+      "training_cross_entropy": 6.572269687395649e-06
+    },
+    {
+      "step": 66000,
+      "training_cross_entropy": 3.268395390041835e-06
+    },
+    {
+      "step": 68000,
+      "training_cross_entropy": 2.199267510012172e-06
+    },
+    {
+      "step": 70000,
+      "training_cross_entropy": 8.01892848081597e-06
+    },
+    {
+      "step": 72000,
+      "training_cross_entropy": 4.269961734014785e-06
+    },
+    {
+      "step": 74000,
+      "training_cross_entropy": 2.1662508668014628e-06
+    },
+    {
+      "step": 76000,
+      "training_cross_entropy": 9.665320902543828e-07
+    },
+    {
+      "step": 78000,
+      "training_cross_entropy": 3.6560179416257483e-07
+    },
+    {
+      "step": 80000,
+      "training_cross_entropy": 1.0468501289929145e-05
+    },
+    {
+      "step": 82000,
+      "training_cross_entropy": 5.154656666334031e-06
+    },
+    {
+      "step": 84000,
+      "training_cross_entropy": 2.6705756752372525e-06
+    },
+    {
+      "step": 86000,
+      "training_cross_entropy": 1.235605419207233e-06
+    },
+    {
+      "step": 88000,
+      "training_cross_entropy": 5.240094553409015e-07
+    },
+    {
+      "step": 90000,
+      "training_cross_entropy": 0.0007553886602727417
+    },
+    {
+      "step": 92000,
+      "training_cross_entropy": 5.27907111012576e-06
+    },
+    {
+      "step": 94000,
+      "training_cross_entropy": 2.749347233488817e-06
+    },
+    {
+      "step": 96000,
+      "training_cross_entropy": 1.3063309498452938e-06
+    },
+    {
+      "step": 98000,
+      "training_cross_entropy": 5.456335265407867e-07
+    },
+    {
+      "step": 100000,
+      "training_cross_entropy": 2.0839214869550565e-07
+    },
+    {
+      "step": 102000,
+      "training_cross_entropy": 7.641511084673598e-08
+    },
+    {
+      "step": 104000,
+      "training_cross_entropy": 4.23023242661207e-06
+    },
+    {
+      "step": 106000,
+      "training_cross_entropy": 2.077021007668602e-06
+    },
+    {
+      "step": 108000,
+      "training_cross_entropy": 1.0590029149577996e-06
+    },
+    {
+      "step": 110000,
+      "training_cross_entropy": 4.866558074699676e-07
+    },
+    {
+      "step": 112000,
+      "training_cross_entropy": 2.027588020664823e-07
+    },
+    {
+      "step": 114000,
+      "training_cross_entropy": 7.926621025470186e-08
+    },
+    {
+      "step": 116000,
+      "training_cross_entropy": 2.913085869539623e-08
+    },
+    {
+      "step": 118000,
+      "training_cross_entropy": 0.00634845328446185
+    },
+    {
+      "step": 120000,
+      "training_cross_entropy": 1.2087445959022062e-06
+    },
+    {
+      "step": 122000,
+      "training_cross_entropy": 6.459841219180196e-07
+    },
+    {
+      "step": 124000,
+      "training_cross_entropy": 3.394044704974757e-07
+    },
+    {
+      "step": 126000,
+      "training_cross_entropy": 1.579262701518696e-07
+    },
+    {
+      "step": 128000,
+      "training_cross_entropy": 6.61538877044319e-08
+    },
+    {
+      "step": 130000,
+      "training_cross_entropy": 2.5783909513660068e-08
+    },
+    {
+      "step": 132000,
+      "training_cross_entropy": 9.54500605740913e-09
+    },
+    {
+      "step": 134000,
+      "training_cross_entropy": 3.0577077227604584e-09
+    },
+    {
+      "step": 136000,
+      "training_cross_entropy": 7.988605830506515e-10
+    },
+    {
+      "step": 138000,
+      "training_cross_entropy": 1.3773458399232108e-10
+    },
+    {
+      "step": 140000,
+      "training_cross_entropy": 1.2649430394955714e-07
+    },
+    {
+      "step": 142000,
+      "training_cross_entropy": 7.013423916273671e-08
+    },
+    {
+      "step": 144000,
+      "training_cross_entropy": 4.189880804188271e-08
+    },
+    {
+      "step": 146000,
+      "training_cross_entropy": 2.3263358940752997e-08
+    },
+    {
+      "step": 148000,
+      "training_cross_entropy": 1.1418194772557727e-08
+    },
+    {
+      "step": 150000,
+      "training_cross_entropy": 4.972218178366797e-09
+    },
+    {
+      "step": 152000,
+      "training_cross_entropy": 1.8180964709343797e-09
+    },
+    {
+      "step": 154000,
+      "training_cross_entropy": 5.922587037783213e-10
+    },
+    {
+      "step": 156000,
+      "training_cross_entropy": 1.928284175892495e-10
+    },
+    {
+      "step": 158000,
+      "training_cross_entropy": 2.7546916798464215e-11
+    },
+    {
+      "step": 160000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 162000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 164000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 166000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 168000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 170000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 172000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 174000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 176000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 178000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 180000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 182000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 184000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 186000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 188000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 190000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 192000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 194000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 196000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 198000,
+      "training_cross_entropy": 0.0
+    },
+    {
+      "step": 200000,
+      "training_cross_entropy": 0.0
+    }
+  ],
+  "selection_seconds": 500.91690164315514,
+  "torch_version": "2.8.0+cu128",
+  "training_seconds": 4728.848563889973,
+  "training_timing_scope": "batch tensor construction, optimizer updates, selection passes, device synchronization",
+  "updates_per_second": 42.293593735951454
+}

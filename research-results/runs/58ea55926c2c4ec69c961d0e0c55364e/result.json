@@ -1,0 +1,14 @@
+{
+  "metrics": {
+    "baseline_accuracy": 0.8522135416666666,
+    "candidate_accuracy": 0.83984375,
+    "accuracy_delta": -0.01236979166666663,
+    "baseline_heldout_loss": 0.4901742438475291,
+    "candidate_heldout_loss": 0.5024355749289194,
+    "baseline_parameters": 5716,
+    "candidate_parameters": 5812,
+    "baseline_training_seconds": 0.11446269799997329,
+    "candidate_training_seconds": 0.133804750333411
+  },
+  "summary": "Energy-normalized feature mixing vs ordinary dense residual mixing on a fixed synthetic cross-feature classification task; three seeds, 1536 train and 512 held-out examples per seed, matched width/depth/optimizer/epochs, parameter counts within 5%. Exploratory, not a novelty claim."
+}

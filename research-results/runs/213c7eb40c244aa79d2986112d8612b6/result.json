@@ -1,0 +1,27 @@
+{
+  "metrics": {
+    "periodic_fourier_dev_loss": 0.33314656217892963,
+    "periodic_fourier_dev_accuracy": 0.8645833333333334,
+    "periodic_relu_dev_loss": 0.6450295547644297,
+    "periodic_relu_dev_accuracy": 0.6396484375,
+    "periodic_linear_dev_loss": 0.6976791421572367,
+    "periodic_linear_dev_accuracy": 0.5458984375,
+    "periodic_raw_dense_dev_loss": 0.7050202985604604,
+    "periodic_raw_dense_dev_accuracy": 0.521484375,
+    "periodic_fourier_minus_relu_dev_loss": -0.31188299258550006,
+    "periodic_fourier_minus_linear_dev_loss": -0.36453257997830707,
+    "periodic_fourier_minus_raw_dense_dev_loss": -0.37187373638153076,
+    "affine_fourier_dev_loss": 0.05150473987062772,
+    "affine_fourier_dev_accuracy": 0.984375,
+    "affine_relu_dev_loss": 0.03377463109791279,
+    "affine_relu_dev_accuracy": 0.9938151041666666,
+    "affine_linear_dev_loss": 0.034337375002602734,
+    "affine_linear_dev_accuracy": 0.9918619791666666,
+    "affine_raw_dense_dev_loss": 0.009728909625361363,
+    "affine_raw_dense_dev_accuracy": 0.9973958333333334,
+    "affine_fourier_minus_relu_dev_loss": 0.01773010877271493,
+    "affine_fourier_minus_linear_dev_loss": 0.017167364868024986,
+    "affine_fourier_minus_raw_dense_dev_loss": 0.041775830245266356
+  },
+  "summary": "Frozen Fourier-feature classification screen: periodic/affine teachers, Fourier/ReLU/linear fixed maps, shared 1122-parameter matched heads plus4946-parameter raw dense residual GELU baseline, 3 datasets x2 paired projection/head initializations,48 fits of120 CPU fullbatch updates. Final120 dev separate from121-state minimum-training-CE checkpoints. Exact inputs/maps/statistics saved; no test, tuning or promotion."
+}

@@ -1,0 +1,6 @@
+{
+  "metrics": {
+    "checks_passed": 6
+  },
+  "summary": "Synthetic CPU diagnostic completed; no training or development data used."
+}

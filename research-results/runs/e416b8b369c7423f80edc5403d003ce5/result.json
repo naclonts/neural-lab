@@ -1,0 +1,22 @@
+{
+  "metrics": {
+    "baseline_accuracy": 0.8522135416666666,
+    "baseline_heldout_loss": 0.4901742438475291,
+    "baseline_training_seconds": 0.1268094623333127,
+    "candidate_accuracy": 0.828125,
+    "candidate_heldout_loss": 1.3587528467178345,
+    "candidate_training_seconds": 0.18746100000013635,
+    "additive_accuracy": 0.828125,
+    "additive_heldout_loss": 0.5920243461926779,
+    "additive_training_seconds": 0.178568721333401,
+    "baseline_parameters": 5716,
+    "candidate_parameters": 5780,
+    "additive_parameters": 5780,
+    "accuracy_delta": -0.02408854166666663,
+    "candidate_minus_baseline_accuracy": -0.024088541666666668,
+    "candidate_minus_additive_accuracy": 0.0,
+    "candidate_minus_baseline_loss": 0.8685786028703054,
+    "candidate_minus_additive_loss": 0.7667285005251566
+  },
+  "summary": "Centered signed product residual versus dense residual and identically initialized centered additive ablation; three paired seeds on synthetic cross-feature classification. Width 48, two blocks, rank 16, 55 full-batch AdamW updates; parameter budgets within 5%. Exploratory architecture hypothesis, not a global novelty or superiority claim. Data and best-training-loss weights: artifacts.json; reported metrics remain final-update metrics."
+}

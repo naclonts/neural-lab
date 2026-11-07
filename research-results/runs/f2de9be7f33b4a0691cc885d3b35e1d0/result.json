@@ -1,0 +1,10 @@
+{
+  "metrics": {
+    "training_seconds": 50.07302445999812,
+    "elapsed_seconds": 249.56616969600145,
+    "fits": 4,
+    "peak_cuda_memory_bytes": 1115697152,
+    "development_evaluated": 0
+  },
+  "summary": "CUDA local-gate timing calibration complete; no development evaluation."
+}

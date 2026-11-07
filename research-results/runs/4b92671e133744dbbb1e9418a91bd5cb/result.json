@@ -1,0 +1,25 @@
+{
+  "metrics": {
+    "unique_dense_dev_loss": 5.129074573516846,
+    "unique_dense_dev_accuracy": 0.236328125,
+    "unique_delta_fixed_dev_loss": 1.0871563752492268,
+    "unique_delta_fixed_dev_accuracy": 0.9820963541666666,
+    "unique_delta_constant_dev_loss": 1.014304369688034,
+    "unique_delta_constant_dev_accuracy": 0.9827473958333334,
+    "unique_delta_occupancy_dev_loss": 0.7136216859022776,
+    "unique_delta_occupancy_dev_accuracy": 0.9908854166666666,
+    "unique_occupancy_minus_delta_constant_dev_loss": -0.3006826837857564,
+    "unique_occupancy_minus_dense_dev_loss": -4.415452887614568,
+    "overwrite_dense_dev_loss": 4.726557652155559,
+    "overwrite_dense_dev_accuracy": 0.2952473958333333,
+    "overwrite_delta_fixed_dev_loss": 1.1018168131510417,
+    "overwrite_delta_fixed_dev_accuracy": 0.9212239583333334,
+    "overwrite_delta_constant_dev_loss": 1.0216708381970723,
+    "overwrite_delta_constant_dev_accuracy": 0.943359375,
+    "overwrite_delta_occupancy_dev_loss": 0.839817096789678,
+    "overwrite_delta_occupancy_dev_accuracy": 0.962890625,
+    "overwrite_occupancy_minus_delta_constant_dev_loss": -0.1818537414073944,
+    "overwrite_occupancy_minus_dense_dev_loss": -3.8867405553658805
+  },
+  "summary": "Development-only associative recall: unique/overwrite, four arms, 3 datasets x 2 initializations, 60 full-batch updates (48 fits). Final60 dev endpoints separate from every-state0..60 minimum-training-CE checkpoints. Six exact datasets and48 checkpoints. No test or promotion."
+}

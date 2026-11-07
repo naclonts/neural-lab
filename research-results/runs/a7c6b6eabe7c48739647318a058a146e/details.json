@@ -1,0 +1,136 @@
+{
+  "config": {
+    "seeds": [
+      1101,
+      1102,
+      1103
+    ],
+    "width": 48,
+    "rank": 16,
+    "blocks": 2,
+    "epochs": 55,
+    "train_examples": 1536,
+    "heldout_examples": 512,
+    "input_dim": 16,
+    "classes": 4,
+    "optimizer": "AdamW",
+    "learning_rate": 0.006,
+    "weight_decay": 0.001,
+    "batch": "full",
+    "centering": "each projection over rank channels per example",
+    "product": "center(a) * center(b), without post-product centering",
+    "additive": "(center(a) + center(b)) / sqrt(2)",
+    "arm_order": [
+      "baseline",
+      "candidate",
+      "additive"
+    ],
+    "parameters": {
+      "baseline": 5716,
+      "candidate": 5780,
+      "additive": 5780
+    }
+  },
+  "environment": {
+    "device": "cuda:0",
+    "device_name": "NVIDIA GeForce RTX 2070",
+    "python": "3.11.13",
+    "torch": "2.8.0+cu128",
+    "cuda": "12.8",
+    "cudnn": 91002,
+    "threads": 4,
+    "deterministic_algorithms": true,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "matmul_tf32": false,
+    "cudnn_tf32": false,
+    "cublas_workspace_config": ":4096:8"
+  },
+  "records": [
+    {
+      "seed": 1101,
+      "task_tensor_sha256": {
+        "train_x": "12a318583dbad9e036e111d9932b29acfef431ed407bdbfcd2518dd1165020f5",
+        "train_y": "df8d48ff907374091e96481e7de4efe7cb05136e9db8672eb82c950f3b4ec4ad",
+        "heldout_x": "c86c3ba934f50c7d4827a4ca38922f24181fa26f5e66a248ea5bcb152fb7b03c",
+        "heldout_y": "de93059a911814f16d8ab79a20d927628bf7619bcce6fffccb568523e9572d9f"
+      },
+      "baseline": {
+        "accuracy": 0.84375,
+        "heldout_loss": 0.5341612696647644,
+        "training_seconds": 0.17343744300001163
+      },
+      "candidate": {
+        "accuracy": 0.818359375,
+        "heldout_loss": 1.5587477684020996,
+        "training_seconds": 0.1671140819998982
+      },
+      "additive": {
+        "accuracy": 0.82421875,
+        "heldout_loss": 0.5754532217979431,
+        "training_seconds": 0.1605275150000125
+      },
+      "candidate_minus_baseline_accuracy": -0.025390625,
+      "candidate_minus_additive_accuracy": -0.005859375,
+      "candidate_minus_baseline_loss": 1.0245864987373352,
+      "candidate_minus_additive_loss": 0.9832945466041565
+    },
+    {
+      "seed": 1102,
+      "task_tensor_sha256": {
+        "train_x": "abd904c33d0bf0225d1080cc356e3b92fd8bc34f23602b082f1646e518354bb5",
+        "train_y": "8823e53253c84d1b9e169ffbf8076f84305bbe480056446b0b40ee4e88b0b327",
+        "heldout_x": "42c7f0fb3a415f546b8beb165df7cdaa3a0b8c0c19fa7704299851c77987ede7",
+        "heldout_y": "17005e188de70b169eac97482744c5d51dfa8cb610ddab029a1479bbfeed563d"
+      },
+      "baseline": {
+        "accuracy": 0.845703125,
+        "heldout_loss": 0.47603529691696167,
+        "training_seconds": 0.08373000599999614
+      },
+      "candidate": {
+        "accuracy": 0.833984375,
+        "heldout_loss": 1.3461307287216187,
+        "training_seconds": 0.15416519700011122
+      },
+      "additive": {
+        "accuracy": 0.83203125,
+        "heldout_loss": 0.5775409936904907,
+        "training_seconds": 0.16627229400000942
+      },
+      "candidate_minus_baseline_accuracy": -0.01171875,
+      "candidate_minus_additive_accuracy": 0.001953125,
+      "candidate_minus_baseline_loss": 0.870095431804657,
+      "candidate_minus_additive_loss": 0.7685897350311279
+    },
+    {
+      "seed": 1103,
+      "task_tensor_sha256": {
+        "train_x": "c11b92d0a772b7aaeebe9a329c28193ca6962103a2dfa5fe5509234fee764901",
+        "train_y": "38e60251c7fb5a6b8e96fa66489616d8788efa3059f341a71c8481b46cb20472",
+        "heldout_x": "4029e3f0d64d6065f5ec5ca5cabaafa5b0969398aa74dfd9a10fcac24004c6ac",
+        "heldout_y": "20b11b0b2acf4f922ae1ab0a5e2c33d3b6c2e88d298b1ffde2fe02631f9d3177"
+      },
+      "baseline": {
+        "accuracy": 0.8671875,
+        "heldout_loss": 0.4603261649608612,
+        "training_seconds": 0.08404694800015022
+      },
+      "candidate": {
+        "accuracy": 0.83203125,
+        "heldout_loss": 1.1713800430297852,
+        "training_seconds": 0.15532323499996892
+      },
+      "additive": {
+        "accuracy": 0.828125,
+        "heldout_loss": 0.6230788230895996,
+        "training_seconds": 0.1555808949999573
+      },
+      "candidate_minus_baseline_accuracy": -0.03515625,
+      "candidate_minus_additive_accuracy": 0.00390625,
+      "candidate_minus_baseline_loss": 0.711053878068924,
+      "candidate_minus_additive_loss": 0.5483012199401855
+    }
+  ],
+  "limitations": "Single synthetic task family, three seeds, fixed arm timing order; deterministic settings do not imply identical results across hardware or library versions."
+}

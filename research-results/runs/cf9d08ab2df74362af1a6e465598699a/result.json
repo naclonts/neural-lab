@@ -1,0 +1,19 @@
+{
+  "metrics": {
+    "screening_criterion_met": 0,
+    "relational_mean_dev_ce": 0.5534161139011383,
+    "relational_mean_dev_accuracy": 0.821,
+    "constant_pair_mean_dev_ce": 0.5992750176429749,
+    "constant_pair_mean_dev_accuracy": 0.8069500000000001,
+    "centered_DS_mean_dev_ce": 0.49386239516735075,
+    "centered_DS_mean_dev_accuracy": 0.84295,
+    "fixed_RBF_mean_dev_ce": 0.5621641107797622,
+    "fixed_RBF_mean_dev_accuracy": 0.82035,
+    "centered_aug_dense_mean_dev_ce": 2.158166188430786,
+    "centered_aug_dense_mean_dev_accuracy": 0.23215000000000002,
+    "training_seconds": 334.78788313399855,
+    "peak_cuda_memory_bytes": 468204032,
+    "elapsed_seconds": 396.87009920800483
+  },
+  "summary": "Frozen mnist CUDA relational campaign: five arms, two initialization seeds, fixed 24 epochs. Exact data/schedules and all-observed training-CE selected weights retained; independent final dev endpoints; no test/tuning/promotion."
+}

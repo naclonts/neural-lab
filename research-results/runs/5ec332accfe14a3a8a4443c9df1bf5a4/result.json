@@ -1,0 +1,8 @@
+{
+  "metrics": {
+    "training_seconds": 2966.9051737350237,
+    "fits": 6,
+    "peak_cuda_memory_bytes": 707689984
+  },
+  "summary": "Cohort completed; independently audit all three cohorts before interpreting campaign."
+}

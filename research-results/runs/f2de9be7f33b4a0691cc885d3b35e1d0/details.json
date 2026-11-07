@@ -1,0 +1,170 @@
+{
+  "mode": "calibration",
+  "config": {
+    "budget_label": "calibration",
+    "gate": "post Conv/GELU/BN in each of4blocks; h*(1+tanh(a_c*s+b_c)); a=b=0; variance clamp(q-mu\u00b2,0)/(q+1e-4); mean mu/sqrt(q+1e-4); constant0 skips moments; plain no gate",
+    "moment_window": "same-channel3x3 stride1 padding1 avg_pool count_include_pad=False; float32; full moment gradients",
+    "architecture": "learned patch2 stem3->64/GELU/BN;4ordinary learned3x3Conv64/GELU/BN/gate; global meanpool linear10",
+    "shared_initialization": "all backbone parameters/BN buffers copied from per-seed plain base; all3gated states identical; gates initially identity",
+    "statistic_ranges": "in exact arithmetic variance in[0,1), mean in(-1,1), constant0; float32 cancellation may perturb variance bound; clamp_min0 at q-mu\u00b2, no extra clipping",
+    "tensor_roles": "all convolution and linear weights/biases learned; gate a,b learned; BN affine learned and running moments/count buffers retained; no frozen bank",
+    "width": 64,
+    "depth": 4,
+    "kernel": 3,
+    "patch": 2,
+    "batch": 256,
+    "optimizer": "AdamW lr=.001 weight_decay=.01 constant",
+    "normalization": "BatchNorm",
+    "precision": "float32 deterministic; TF32 disabled",
+    "epochs": 2,
+    "seeds": [
+      2701
+    ],
+    "split_seed": 20261030,
+    "protocol": "two-epoch timing-only exact-arm CUDA calibration; no development evaluation; planning-longer-20261031.md",
+    "criteria": {
+      "variance_mean_ce_max": -0.01,
+      "variance_constant_ce_max": -0.01,
+      "variance_plain_ce_max": 0.02
+    }
+  },
+  "records": [
+    {
+      "seed": 2701,
+      "arm": "variance",
+      "training_seconds": 17.036038846999872,
+      "evaluation_artifact_seconds": 2.9154778720112517,
+      "steady_epoch_seconds": 8.363099962996785,
+      "epoch_seconds": [
+        8.672407885009306,
+        8.363099962996785
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 1115697152,
+      "peak_reserved_bytes": 1333788672,
+      "parameters": 150346,
+      "trainable_parameters": 150346,
+      "final_train": {
+        "ce": 1.1002490044487847,
+        "accuracy": 0.6064666666666667
+      },
+      "final_dev": null,
+      "dev_minus_train_ce": null,
+      "dev_minus_train_accuracy": null,
+      "arm_order": [
+        "variance",
+        "mean",
+        "constant",
+        "plain"
+      ],
+      "final": "checkpoints/2701-variance-final.json",
+      "selected": "checkpoints/2701-variance-training-selected.json"
+    },
+    {
+      "seed": 2701,
+      "arm": "mean",
+      "training_seconds": 15.591403341997648,
+      "evaluation_artifact_seconds": 2.6613086110010045,
+      "steady_epoch_seconds": 7.782919488003245,
+      "epoch_seconds": [
+        7.8079904499900294,
+        7.782919488003245
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 1008889856,
+      "peak_reserved_bytes": 1333788672,
+      "parameters": 150346,
+      "trainable_parameters": 150346,
+      "final_train": {
+        "ce": 1.0996625247531466,
+        "accuracy": 0.6061555555555556
+      },
+      "final_dev": null,
+      "dev_minus_train_ce": null,
+      "dev_minus_train_accuracy": null,
+      "arm_order": [
+        "variance",
+        "mean",
+        "constant",
+        "plain"
+      ],
+      "final": "checkpoints/2701-mean-final.json",
+      "selected": "checkpoints/2701-mean-training-selected.json"
+    },
+    {
+      "seed": 2701,
+      "arm": "constant",
+      "training_seconds": 9.755158439002116,
+      "evaluation_artifact_seconds": 1.9589042450097622,
+      "steady_epoch_seconds": 4.86212817998603,
+      "epoch_seconds": [
+        4.8926293780095875,
+        4.86212817998603
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 857894912,
+      "peak_reserved_bytes": 1333788672,
+      "parameters": 150346,
+      "trainable_parameters": 150346,
+      "final_train": {
+        "ce": 1.1002693294949002,
+        "accuracy": 0.6062
+      },
+      "final_dev": null,
+      "dev_minus_train_ce": null,
+      "dev_minus_train_accuracy": null,
+      "arm_order": [
+        "variance",
+        "mean",
+        "constant",
+        "plain"
+      ],
+      "final": "checkpoints/2701-constant-final.json",
+      "selected": "checkpoints/2701-constant-training-selected.json"
+    },
+    {
+      "seed": 2701,
+      "arm": "plain",
+      "training_seconds": 7.690423831998487,
+      "evaluation_artifact_seconds": 1.4700800249993335,
+      "steady_epoch_seconds": 3.8417192150081974,
+      "epoch_seconds": [
+        3.8482936689979397,
+        3.8417192150081974
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 656555008,
+      "peak_reserved_bytes": 1333788672,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "final_train": {
+        "ce": 1.1063599487304687,
+        "accuracy": 0.6041555555555556
+      },
+      "final_dev": null,
+      "dev_minus_train_ce": null,
+      "dev_minus_train_accuracy": null,
+      "arm_order": [
+        "variance",
+        "mean",
+        "constant",
+        "plain"
+      ],
+      "final": "checkpoints/2701-plain-final.json",
+      "selected": "checkpoints/2701-plain-training-selected.json"
+    }
+  ],
+  "source_sha256": "610f9d1d70c881117e5d8e552d35f90c7b09ca39636cedf862eac6d0d04b5ea0",
+  "device": "NVIDIA GeForce RTX 2070",
+  "torch_version": "2.8.0+cu128",
+  "cuda_version": "12.8",
+  "elapsed_seconds": 249.56616969600145,
+  "training_seconds": 50.07302445999812,
+  "development_evaluated": false,
+  "preparation_seconds": 189.73078599000291,
+  "limitations": "Timing-only; two epochs per arm on one seed, no development evaluation. Timing includes checkpoint instrumentation and sampled gate diagnostics; startup and selection costs may vary."
+}

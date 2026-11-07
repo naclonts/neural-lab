@@ -1,0 +1,9 @@
+{
+  "metrics": {
+    "screen_pass": 0,
+    "mean_consistency_difference": 0.010441666666666667,
+    "mean_clean_ce_difference": 0.09733714345296225,
+    "fits": 12
+  },
+  "summary": "Frozen paired anti-alias screen; independently audit before interpretation."
+}

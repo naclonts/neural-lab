@@ -1,0 +1,115 @@
+{
+  "preparation_seconds": 39.34092533399962,
+  "mode": "calibration",
+  "config": {
+    "bank_filters_per_channel": 2,
+    "gate_hidden": 16,
+    "gate": "64->16 GELU->128 softmax2/channel; dynamic pooled block input versus static allones",
+    "architecture": "patch stem GELU BN;4 residual spatial/GELU/BN + pointwise/GELU/BN; meanpool linear10; CNN4 ordinary3x3/GELU/BN",
+    "shared_initialization": "all common name/shape tensors copied from dynamic base; dynamic/static exact states copied",
+    "width": 64,
+    "depth": 4,
+    "kernel": 5,
+    "patch": 2,
+    "batch": 256,
+    "optimizer": "AdamW lr=.001 weight_decay=.01 constant",
+    "normalization": "BatchNorm",
+    "precision": "float32 deterministic; TF32 disabled",
+    "epochs": 2,
+    "seeds": [
+      1701
+    ],
+    "split_seed": 20261030
+  },
+  "records": [
+    {
+      "seed": 1701,
+      "arm": "dynamic",
+      "training_seconds": 23.933156107996183,
+      "evaluation_artifact_seconds": 0.2702377940004226,
+      "steady_epoch_seconds": 11.757255689997692,
+      "epoch_seconds": [
+        12.17517890399904,
+        11.757255689997692
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_dev": null,
+      "final": "checkpoints/1701-dynamic-final.json",
+      "selected": "checkpoints/1701-dynamic-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "static",
+      "training_seconds": 23.458325229003094,
+      "evaluation_artifact_seconds": 0.2793027949956013,
+      "steady_epoch_seconds": 11.7426133189947,
+      "epoch_seconds": [
+        11.715006733000337,
+        11.7426133189947
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_dev": null,
+      "final": "checkpoints/1701-static-final.json",
+      "selected": "checkpoints/1701-static-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "learned",
+      "training_seconds": 15.67036175300018,
+      "evaluation_artifact_seconds": 0.24276418900262797,
+      "steady_epoch_seconds": 7.297549622002407,
+      "epoch_seconds": [
+        8.372151755000232,
+        7.297549622002407
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 711918592,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 25930,
+      "trainable_parameters": 25930,
+      "final_dev": null,
+      "final": "checkpoints/1701-learned-final.json",
+      "selected": "checkpoints/1701-learned-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "cnn",
+      "training_seconds": 7.618594113999279,
+      "evaluation_artifact_seconds": 0.6815237409973633,
+      "steady_epoch_seconds": 3.7983564810056123,
+      "epoch_seconds": [
+        3.8198310700026923,
+        3.7983564810056123
+      ],
+      "updates": 352,
+      "examples": 90000,
+      "peak_allocated_bytes": 656555008,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "final_dev": null,
+      "final": "checkpoints/1701-cnn-final.json",
+      "selected": "checkpoints/1701-cnn-training-selected.json"
+    }
+  ],
+  "source_sha256": "9b6ee1b8557b4b97b8dbade38981c66e9efe26c38b9ead0666ec813d228698b3",
+  "device": "NVIDIA GeForce RTX 2070",
+  "torch_version": "2.8.0+cu128",
+  "cuda_version": "12.8",
+  "elapsed_seconds": 112.18611093200161,
+  "training_seconds": 70.68043720399874,
+  "development_evaluated": false,
+  "limitations": "Established input-conditioned dynamic convolution family; two frozen filters per channel and pooled-input softmax gate, matched static all-ones input gate; no architecture invention claim. Static gate parameter redundancy and unequal effective capacity; learned ConvMixer/CNN unequal capacity and compute; optimization seeds on one split; no test",
+  "projection": "Use per-arm epoch timings and observed preparation/artifact overhead; freeze future jobs before dev evaluation; no padding or automatic extension"
+}

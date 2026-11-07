@@ -1,0 +1,30 @@
+{
+  "metrics": {
+    "additive_dense_dev_loss": 0.1526375710964203,
+    "additive_dense_dev_accuracy": 0.943359375,
+    "additive_raw_additive_dev_loss": 0.18591600904862085,
+    "additive_raw_additive_dev_accuracy": 0.9443359375,
+    "additive_raw_product_dev_loss": 0.36661043018102646,
+    "additive_raw_product_dev_accuracy": 0.931640625,
+    "additive_tanh_additive_dev_loss": 0.16220210492610931,
+    "additive_tanh_additive_dev_accuracy": 0.9459635416666666,
+    "additive_tanh_product_dev_loss": 0.16063042481740317,
+    "additive_tanh_product_dev_accuracy": 0.9443359375,
+    "interaction_dense_dev_loss": 0.5543781767288843,
+    "interaction_dense_dev_accuracy": 0.7958984375,
+    "interaction_raw_additive_dev_loss": 0.6024933556715647,
+    "interaction_raw_additive_dev_accuracy": 0.80078125,
+    "interaction_raw_product_dev_loss": 0.9228293100992838,
+    "interaction_raw_product_dev_accuracy": 0.7698567708333334,
+    "interaction_tanh_additive_dev_loss": 0.5656030674775442,
+    "interaction_tanh_additive_dev_accuracy": 0.7972005208333334,
+    "interaction_tanh_product_dev_loss": 0.6233525276184082,
+    "interaction_tanh_product_dev_accuracy": 0.7705078125,
+    "primary_specificity_dev_loss": 0.059321140249570206,
+    "additive_tanh_product_minus_tanh_additive_dev_loss": -0.0015716801087061565,
+    "additive_tanh_product_minus_dense_dev_loss": 0.00799285372098287,
+    "interaction_tanh_product_minus_tanh_additive_dev_loss": 0.05774946014086405,
+    "interaction_tanh_product_minus_dense_dev_loss": 0.06897435088952382
+  },
+  "summary": "Development-only rotated additive/interaction teacher specificity: five arms, 3 teachers x 2 initializations per family, 40 full-batch updates. Final-update dev endpoints independent of saved minimum-training-loss checkpoints (every state0..40 observed). Six exact datasets and60 checkpoints in artifacts.json. No promotion."
+}

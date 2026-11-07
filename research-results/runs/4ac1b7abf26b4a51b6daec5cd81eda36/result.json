@@ -1,0 +1,8 @@
+{
+  "metrics": {
+    "validation_accuracy": 0.890625,
+    "baseline_accuracy": 0.796875,
+    "accuracy_delta": 0.09375
+  },
+  "summary": "Synthetic seed=1001; train=512, held-out validation=128; linear baseline=0.7969, candidate=0.8906. Visualization: ok. Data and best-training-loss weights: artifacts.json. Reported metrics remain final-update metrics. Exploratory only; no novelty claim."
+}

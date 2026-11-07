@@ -1,0 +1,10 @@
+{
+  "metrics": {
+    "training_seconds": 70.68043720399874,
+    "elapsed_seconds": 112.18611093200161,
+    "fits": 4,
+    "peak_cuda_memory_bytes": 847234048,
+    "development_evaluated": 0
+  },
+  "summary": "CUDA native CIFAR10 calibration complete; exact data, schedules, training-selected and final weights retained. Calibration never evaluates dev."
+}

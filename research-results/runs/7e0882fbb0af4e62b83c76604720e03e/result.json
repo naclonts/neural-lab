@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "screening_criterion_met": 0,
+    "variance_mean_dev_ce": 1.2398214874267577,
+    "mean_mean_dev_ce": 1.4406570938110352,
+    "constant_mean_dev_ce": 0.558316173171997,
+    "plain_mean_dev_ce": 0.5232535633087159,
+    "training_seconds": 8017.259268953014,
+    "elapsed_seconds": 8104.313070363001,
+    "fits": 8,
+    "peak_cuda_memory_bytes": 1115697152,
+    "development_evaluated": 1
+  },
+  "summary": "CUDA native CIFAR10 campaign complete; exact data, schedules, training-selected and final weights retained. Both horizons jointly required; final independent endpoints only."
+}

@@ -1,0 +1,6 @@
+{
+  "metrics": {
+    "checks_passed": 5
+  },
+  "summary": "Synthetic CPU checks only; no training or dataset use"
+}

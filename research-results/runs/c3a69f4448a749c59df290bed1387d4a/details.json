@@ -1,0 +1,32 @@
+{
+  "device": "cuda:0",
+  "records": [
+    {
+      "seed": 1101,
+      "baseline_accuracy": 0.84375,
+      "candidate_accuracy": 0.796875,
+      "baseline_loss": 0.5341612696647644,
+      "candidate_loss": 0.613057017326355,
+      "baseline_seconds": 0.1765824869999051,
+      "candidate_seconds": 0.1581794600001558
+    },
+    {
+      "seed": 1102,
+      "baseline_accuracy": 0.845703125,
+      "candidate_accuracy": 0.822265625,
+      "baseline_loss": 0.47603529691696167,
+      "candidate_loss": 0.523793637752533,
+      "baseline_seconds": 0.08373601900007088,
+      "candidate_seconds": 0.13654007900004217
+    },
+    {
+      "seed": 1103,
+      "baseline_accuracy": 0.8671875,
+      "candidate_accuracy": 0.787109375,
+      "baseline_loss": 0.4603261649608612,
+      "candidate_loss": 0.6763613224029541,
+      "baseline_seconds": 0.084430698999995,
+      "candidate_seconds": 0.13357413399990037
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "metrics": {
+    "unique_delta_occupancy_dev_loss": 0.6210245390733083,
+    "unique_delta_occupancy_dev_accuracy": 0.9938151041666666,
+    "unique_delta_constant_feature_dev_loss": 0.5513954112927119,
+    "unique_delta_constant_feature_dev_accuracy": 0.9921875,
+    "unique_delta_timestep_dev_loss": 0.676603356997172,
+    "unique_delta_timestep_dev_accuracy": 0.9925130208333334,
+    "unique_delta_shuffled_history_dev_loss": 0.6238129238287607,
+    "unique_delta_shuffled_history_dev_accuracy": 0.9928385416666666,
+    "unique_delta_constant_dev_loss": 0.9307707150777181,
+    "unique_delta_constant_dev_accuracy": 0.9860026041666666,
+    "unique_occupancy_minus_delta_constant_feature_dev_loss": 0.06962912778059642,
+    "unique_occupancy_minus_delta_timestep_dev_loss": -0.05557881792386373,
+    "unique_occupancy_minus_delta_shuffled_history_dev_loss": -0.002788384755452474,
+    "unique_occupancy_minus_delta_constant_dev_loss": -0.3097461760044098,
+    "overwrite_delta_occupancy_dev_loss": 0.7563647925853729,
+    "overwrite_delta_occupancy_dev_accuracy": 0.9856770833333334,
+    "overwrite_delta_constant_feature_dev_loss": 0.5104310562213262,
+    "overwrite_delta_constant_feature_dev_accuracy": 0.9967447916666666,
+    "overwrite_delta_timestep_dev_loss": 0.6939417719841003,
+    "overwrite_delta_timestep_dev_accuracy": 0.994140625,
+    "overwrite_delta_shuffled_history_dev_loss": 0.747189869483312,
+    "overwrite_delta_shuffled_history_dev_accuracy": 0.9879557291666666,
+    "overwrite_delta_constant_dev_loss": 0.9506287376085917,
+    "overwrite_delta_constant_dev_accuracy": 0.9703776041666666,
+    "overwrite_occupancy_minus_delta_constant_feature_dev_loss": 0.24593373636404672,
+    "overwrite_occupancy_minus_delta_timestep_dev_loss": 0.06242302060127258,
+    "overwrite_occupancy_minus_delta_shuffled_history_dev_loss": 0.009174923102060953,
+    "overwrite_occupancy_minus_delta_constant_dev_loss": -0.19426394502321878
+  },
+  "summary": "Fresh-seed development-only occupancy controls: unique/overwrite, five arms, 3 datasets x2 initializations, exactly60 updates (60 fits). Final60 dev endpoints separate from61-state minimum-training-CE checkpoints. Six exact datasets and60 checkpoints. Shuffled arm is batch-coupled. No test or promotion."
+}

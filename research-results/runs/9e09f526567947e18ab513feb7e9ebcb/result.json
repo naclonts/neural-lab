@@ -1,0 +1,8 @@
+{
+  "metrics": {
+    "fits": 2,
+    "development_evaluated": 0,
+    "elapsed_seconds": 62.96080398799677
+  },
+  "summary": "No-dev CUDA anti-alias calibration complete; timing does not establish scientific outcome."
+}

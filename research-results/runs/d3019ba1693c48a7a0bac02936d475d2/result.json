@@ -1,0 +1,1 @@
+{"metrics": {"arms_completed": 3, "updates_per_arm": 352, "presentations_per_arm": 90000}, "summary": "Real-data calibration completed; no development or test endpoint was evaluated. Details are in calibration/calibration.json."}

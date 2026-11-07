@@ -1,0 +1,29 @@
+{
+  "metrics": {
+    "dense_train_loss": 0.06367232898871104,
+    "dense_train_accuracy": 0.986436645189921,
+    "dense_dev_loss": 0.5130286514759064,
+    "dense_dev_accuracy": 0.8515625,
+    "additive_train_loss": 0.06562486477196217,
+    "additive_train_accuracy": 0.980468769868215,
+    "additive_dev_loss": 0.6048317203919092,
+    "additive_dev_accuracy": 0.8561197916666666,
+    "product_train_loss": 0.04354770481586456,
+    "product_train_accuracy": 0.9878472487131754,
+    "product_dev_loss": 1.5507123668988545,
+    "product_dev_accuracy": 0.8258463541666666,
+    "scaled_product_train_loss": 0.019088193541392684,
+    "scaled_product_train_accuracy": 0.9950086971124014,
+    "scaled_product_dev_loss": 2.3810483614603677,
+    "scaled_product_dev_accuracy": 0.7985026041666666,
+    "dense_parameters": 5716,
+    "additive_parameters": 5780,
+    "product_parameters": 5780,
+    "scaled_product_parameters": 5780,
+    "scaled_product_minus_product_dev_loss": 0.8303359945615133,
+    "product_minus_additive_dev_loss": 0.9458806465069453,
+    "scaled_product_minus_additive_dev_loss": 1.7762166410684586,
+    "scaled_product_minus_dense_dev_loss": 1.8680197099844615
+  },
+  "summary": "Development-only centered product scale diagnostic with dense, raw additive/product, and frozen training-calibrated pre-up scalar product control; 55 full-batch updates, three fresh teachers and two paired initializations. No selection or promotion. Data and best observed training-loss weights: artifacts.json; reported metrics remain final-update metrics."
+}

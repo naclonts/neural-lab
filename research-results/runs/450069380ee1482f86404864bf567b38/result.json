@@ -1,0 +1,22 @@
+{
+  "metrics": {
+    "A_fresh_inference_seconds": 1.2662816109950654,
+    "A_independent_audit_seconds": 0.06431631001760252,
+    "A_inference_seconds": 0.09990290200221352,
+    "A_parameters": 913443,
+    "A_peak_allocated_bytes": 86685184,
+    "A_peak_reserved_bytes": 96468992,
+    "A_replay_seconds": 1.166209404997062,
+    "A_training_seconds": 2.2866231319785584,
+    "B_fresh_inference_seconds": 1.3164008200110402,
+    "B_independent_audit_seconds": 0.0638190180179663,
+    "B_inference_seconds": 0.12483141300617717,
+    "B_parameters": 936843,
+    "B_peak_allocated_bytes": 87154176,
+    "B_peak_reserved_bytes": 96468992,
+    "B_replay_seconds": 1.1662937719956972,
+    "B_training_seconds": 2.330735323979752,
+    "wall_seconds": 12.80314922600519
+  },
+  "summary": "Disposable NL-001 calibration; see nl001-calibration/selection/selection-summary.json and inventory.json. Test fixture is not isolated; same-code replay and audit are not independent semantic validation."
+}

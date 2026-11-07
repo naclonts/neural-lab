@@ -1,0 +1,14 @@
+{
+  "metrics": {
+    "baseline_accuracy": 0.8522135416666666,
+    "candidate_accuracy": 0.8020833333333334,
+    "accuracy_delta": -0.05013020833333326,
+    "baseline_heldout_loss": 0.4901742438475291,
+    "candidate_heldout_loss": 0.6044039924939474,
+    "baseline_parameters": 5716,
+    "candidate_parameters": 5844,
+    "baseline_training_seconds": 0.114916401666657,
+    "candidate_training_seconds": 0.14276455766669946
+  },
+  "summary": "Input-conditioned low-rank residual gate vs dense residual MLP on a fixed synthetic cross-feature classification task; three seeds, 1536 train and 512 held-out examples per seed, matched width/depth/optimizer/epochs, parameter counts within 5%. Exploratory comparison, not a novelty claim."
+}

@@ -1,0 +1,84 @@
+{
+  "config": {
+    "purpose": "no-dev calibration only; no scientific endpoint",
+    "epochs": 2,
+    "seeds": [
+      3801
+    ],
+    "arms": [
+      "plain",
+      "binomial"
+    ],
+    "split_seed": 20261030,
+    "batch": 256,
+    "optimizer": "AdamW lr=0.001 weight_decay=0.01 constant",
+    "dtype": "float32 deterministic, TF32 disabled",
+    "intervention": "reflect pad1 then channelwise binomial [1,2,1] outer /16 on normalized input before learned stem",
+    "checkpoint_selection": "BestCheckpoint earliest minimum of post-epoch canonical train inference CE"
+  },
+  "records": [
+    {
+      "seed": 3801,
+      "arm": "plain",
+      "arm_order": [
+        "plain",
+        "binomial"
+      ],
+      "updates": 352,
+      "epochs": 2,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "training_seconds_including_train_eval": 9.263429806989734,
+      "epoch_update_seconds": [
+        3.82745956099825,
+        3.7430984180100495
+      ],
+      "peak_allocated_bytes": 656558592,
+      "peak_reserved_bytes": 729808896,
+      "final_train": [
+        1.113932041083442,
+        0.6072222222222222
+      ],
+      "checkpoint_roundtrip_exact": true,
+      "final": "checkpoints/3801-plain-final.json",
+      "selected": "checkpoints/3801-plain-training-selected.json"
+    },
+    {
+      "seed": 3801,
+      "arm": "binomial",
+      "arm_order": [
+        "plain",
+        "binomial"
+      ],
+      "updates": 352,
+      "epochs": 2,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "training_seconds_including_train_eval": 7.059214655004325,
+      "epoch_update_seconds": [
+        2.6709045780007727,
+        2.664886230006232
+      ],
+      "peak_allocated_bytes": 537611264,
+      "peak_reserved_bytes": 729808896,
+      "final_train": [
+        1.1575478000217014,
+        0.5925333333333334
+      ],
+      "checkpoint_roundtrip_exact": true,
+      "final": "checkpoints/3801-binomial-final.json",
+      "selected": "checkpoints/3801-binomial-training-selected.json"
+    }
+  ],
+  "development_evaluated": false,
+  "source_sha256": "a65109452703842fdc05a8bb370d748e4a006b12ff2a3678eb8a1eb6ed656659",
+  "artifact_helper_sha256": "6ef5863486d3f9cfa4fac8b06823ff399986c78e898130e979a9035c6f062baf",
+  "torch_version": "2.8.0+cu128",
+  "cuda_version": "12.8",
+  "cudnn_version": 91002,
+  "numpy_version": "2.3.2",
+  "datasets_version": "4.8.5",
+  "huggingface_hub_version": "1.3.7",
+  "device": "NVIDIA GeForce RTX 2070",
+  "elapsed_seconds": 62.96080398799677
+}

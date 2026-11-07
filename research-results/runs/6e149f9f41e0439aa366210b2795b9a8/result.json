@@ -1,0 +1,8 @@
+{
+  "metrics": {
+    "training_seconds": 2889.9544147720153,
+    "fits": 6,
+    "peak_cuda_memory_bytes": 707689984
+  },
+  "summary": "Cohort completed; validate the complete separately frozen study before interpretation."
+}

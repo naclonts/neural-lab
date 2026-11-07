@@ -1,0 +1,424 @@
+{
+  "arm_means": {
+    "dynamic": {
+      "ce": 0.9085104576110841,
+      "accuracy": 0.6754
+    },
+    "static": {
+      "ce": 0.9192473716735841,
+      "accuracy": 0.6807
+    },
+    "learned": {
+      "ce": 0.8182927947998047,
+      "accuracy": 0.7110000000000001
+    },
+    "cnn": {
+      "ce": 0.6820008171081543,
+      "accuracy": 0.7643
+    }
+  },
+  "paired_dynamic_minus_control_dev_ce": {
+    "static": [
+      -0.010771405029296854,
+      -0.010702423095703129
+    ],
+    "learned": [
+      0.09331844024658209,
+      0.08711688537597662
+    ],
+    "cnn": [
+      0.22299637908935543,
+      0.23002290191650399
+    ]
+  },
+  "mean_dynamic_minus_control_dev_ce": {
+    "static": -0.010736914062499991,
+    "learned": 0.09021766281127935,
+    "cnn": 0.2265096405029297
+  },
+  "frozen_screen_clauses": {
+    "dynamic_static_mean_ce": true,
+    "dynamic_static_both_seeds_negative": true,
+    "dynamic_learned_mean_ce": false,
+    "dynamic_cnn_mean_ce": false
+  },
+  "screening_criterion_met": false,
+  "preparation_seconds": 38.949022529996,
+  "mode": "campaign",
+  "config": {
+    "budget_label": "short",
+    "bank_filters_per_channel": 2,
+    "gate_hidden": 16,
+    "gate": "64->16 GELU->128 softmax2/channel; dynamic pooled block input versus static allones",
+    "architecture": "patch stem GELU BN;4 residual spatial/GELU/BN + pointwise/GELU/BN; meanpool linear10; CNN4 ordinary3x3/GELU/BN",
+    "shared_initialization": "all common name/shape tensors copied from dynamic base; dynamic/static exact states copied",
+    "width": 64,
+    "depth": 4,
+    "kernel": 5,
+    "patch": 2,
+    "batch": 256,
+    "optimizer": "AdamW lr=.001 weight_decay=.01 constant",
+    "normalization": "BatchNorm",
+    "precision": "float32 deterministic; TF32 disabled",
+    "epochs": 9,
+    "seeds": [
+      1701,
+      1702
+    ],
+    "split_seed": 20261030,
+    "protocol": "native-CIFAR conditional-bank fixed-budget short comparison; planning-cifar-20261030.md; frozen before scientific endpoints from calibration119a7704757740b4a92db73b5305a90b timing only: epochs9/13, useful622.724/899.490s, conservative total1014.192/1346.312s including20percent train overhead,2S evaluation,1.5P preparation,60seconds reserve,4A serialization; original10/15 rejected forecast1512greater1500",
+    "criteria": {
+      "dynamic_static_ce_max": -0.01,
+      "both_dynamic_static_seeds_negative": true,
+      "dynamic_learned_ce_max": 0.02,
+      "dynamic_cnn_ce_max": 0.02
+    }
+  },
+  "records": [
+    {
+      "seed": 1701,
+      "arm": "dynamic",
+      "training_seconds": 110.4679333669992,
+      "evaluation_artifact_seconds": 2.370814244997746,
+      "steady_epoch_seconds": 12.860671005000768,
+      "epoch_seconds": [
+        12.128564437996829,
+        11.964019228005782,
+        12.018482058003428,
+        12.106718514005479,
+        12.143017905997112,
+        12.231435301000602,
+        12.351648251002189,
+        12.660472985000524,
+        12.860671005000768
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_train": {
+        "ce": 0.8691351196289062,
+        "accuracy": 0.6901111111111111
+      },
+      "final_dev": {
+        "ce": 0.9219818771362305,
+        "accuracy": 0.6758
+      },
+      "dev_minus_train_ce": 0.05284675750732426,
+      "dev_minus_train_accuracy": -0.014311111111111163,
+      "arm_order": [
+        "dynamic",
+        "static",
+        "learned",
+        "cnn"
+      ],
+      "final": "checkpoints/1701-dynamic-final.json",
+      "selected": "checkpoints/1701-dynamic-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "static",
+      "training_seconds": 117.88967135399434,
+      "evaluation_artifact_seconds": 2.415797057998134,
+      "steady_epoch_seconds": 13.234308090999548,
+      "epoch_seconds": [
+        12.872472907001793,
+        12.87281368800177,
+        13.076571927005716,
+        13.002138698000635,
+        13.179370955003833,
+        13.208401803000015,
+        13.220087244000752,
+        13.22062734499923,
+        13.234308090999548
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_train": {
+        "ce": 0.8950085717095269,
+        "accuracy": 0.6803333333333333
+      },
+      "final_dev": {
+        "ce": 0.9327532821655273,
+        "accuracy": 0.6688
+      },
+      "dev_minus_train_ce": 0.037744710456000474,
+      "dev_minus_train_accuracy": -0.011533333333333395,
+      "arm_order": [
+        "dynamic",
+        "static",
+        "learned",
+        "cnn"
+      ],
+      "final": "checkpoints/1701-static-final.json",
+      "selected": "checkpoints/1701-static-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "learned",
+      "training_seconds": 76.2483549049939,
+      "evaluation_artifact_seconds": 1.5820929869951215,
+      "steady_epoch_seconds": 8.362052391996258,
+      "epoch_seconds": [
+        9.337850914998853,
+        8.411283121000452,
+        8.443914167997718,
+        8.444667878000473,
+        8.206810550000228,
+        8.354777221000404,
+        8.261390915999073,
+        8.423124665001524,
+        8.362052391996258
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 711918592,
+      "peak_reserved_bytes": 901775360,
+      "parameters": 25930,
+      "trainable_parameters": 25930,
+      "final_train": {
+        "ce": 0.7596757470024956,
+        "accuracy": 0.7300888888888889
+      },
+      "final_dev": {
+        "ce": 0.8286634368896484,
+        "accuracy": 0.7064
+      },
+      "dev_minus_train_ce": 0.06898768988715276,
+      "dev_minus_train_accuracy": -0.02368888888888887,
+      "arm_order": [
+        "dynamic",
+        "static",
+        "learned",
+        "cnn"
+      ],
+      "final": "checkpoints/1701-learned-final.json",
+      "selected": "checkpoints/1701-learned-training-selected.json"
+    },
+    {
+      "seed": 1701,
+      "arm": "cnn",
+      "training_seconds": 38.280355567003426,
+      "evaluation_artifact_seconds": 1.6479088670021156,
+      "steady_epoch_seconds": 4.250037014004192,
+      "epoch_seconds": [
+        4.21009291500377,
+        4.270301083000959,
+        4.2682253980019595,
+        4.252591378994111,
+        4.247779908997472,
+        4.257361691001279,
+        4.26233674899413,
+        4.259501419001026,
+        4.250037014004192
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 656555008,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "final_train": {
+        "ce": 0.6292265969170464,
+        "accuracy": 0.7796444444444445
+      },
+      "final_dev": {
+        "ce": 0.698985498046875,
+        "accuracy": 0.7606
+      },
+      "dev_minus_train_ce": 0.06975890112982863,
+      "dev_minus_train_accuracy": -0.01904444444444442,
+      "arm_order": [
+        "dynamic",
+        "static",
+        "learned",
+        "cnn"
+      ],
+      "final": "checkpoints/1701-cnn-final.json",
+      "selected": "checkpoints/1701-cnn-training-selected.json"
+    },
+    {
+      "seed": 1702,
+      "arm": "cnn",
+      "training_seconds": 38.39761374599766,
+      "evaluation_artifact_seconds": 1.7600789689968224,
+      "steady_epoch_seconds": 4.260118510996108,
+      "epoch_seconds": [
+        4.2780840970008285,
+        4.263635824005178,
+        4.265867619003984,
+        4.265517633000854,
+        4.264606308999646,
+        4.26101385900256,
+        4.268848940999305,
+        4.2679181630010135,
+        4.260118510996108
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 656555008,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 149834,
+      "trainable_parameters": 149834,
+      "final_train": {
+        "ce": 0.5994409123738607,
+        "accuracy": 0.7916888888888889
+      },
+      "final_dev": {
+        "ce": 0.6650161361694336,
+        "accuracy": 0.768
+      },
+      "dev_minus_train_ce": 0.0655752237955729,
+      "dev_minus_train_accuracy": -0.02368888888888887,
+      "arm_order": [
+        "cnn",
+        "learned",
+        "static",
+        "dynamic"
+      ],
+      "final": "checkpoints/1702-cnn-final.json",
+      "selected": "checkpoints/1702-cnn-training-selected.json"
+    },
+    {
+      "seed": 1702,
+      "arm": "learned",
+      "training_seconds": 76.86270549899928,
+      "evaluation_artifact_seconds": 1.5336623460025294,
+      "steady_epoch_seconds": 8.536837469000602,
+      "epoch_seconds": [
+        8.587611214999924,
+        8.535430639996775,
+        8.536299906001659,
+        8.530154410997056,
+        8.537777607001772,
+        8.537509276000492,
+        8.532248534000246,
+        8.526414535001095,
+        8.536837469000602
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 711918592,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 25930,
+      "trainable_parameters": 25930,
+      "final_train": {
+        "ce": 0.7532878875732422,
+        "accuracy": 0.7345555555555555
+      },
+      "final_dev": {
+        "ce": 0.8079221527099609,
+        "accuracy": 0.7156
+      },
+      "dev_minus_train_ce": 0.05463426513671876,
+      "dev_minus_train_accuracy": -0.018955555555555503,
+      "arm_order": [
+        "cnn",
+        "learned",
+        "static",
+        "dynamic"
+      ],
+      "final": "checkpoints/1702-learned-final.json",
+      "selected": "checkpoints/1702-learned-training-selected.json"
+    },
+    {
+      "seed": 1702,
+      "arm": "static",
+      "training_seconds": 123.02320139199583,
+      "evaluation_artifact_seconds": 2.4893596799956867,
+      "steady_epoch_seconds": 13.673898209999606,
+      "epoch_seconds": [
+        13.72005089600134,
+        13.551126548001776,
+        13.6764407390001,
+        13.67450922599528,
+        13.670846148997953,
+        13.675978137995116,
+        13.696483100000478,
+        13.680940689999261,
+        13.673898209999606
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_train": {
+        "ce": 0.8659599409315322,
+        "accuracy": 0.6934888888888889
+      },
+      "final_dev": {
+        "ce": 0.9057414611816407,
+        "accuracy": 0.6926
+      },
+      "dev_minus_train_ce": 0.039781520250108504,
+      "dev_minus_train_accuracy": -0.000888888888888939,
+      "arm_order": [
+        "cnn",
+        "learned",
+        "static",
+        "dynamic"
+      ],
+      "final": "checkpoints/1702-static-final.json",
+      "selected": "checkpoints/1702-static-training-selected.json"
+    },
+    {
+      "seed": 1702,
+      "arm": "dynamic",
+      "training_seconds": 125.23539651900501,
+      "evaluation_artifact_seconds": 2.490809647999413,
+      "steady_epoch_seconds": 13.825678795998101,
+      "epoch_seconds": [
+        13.992636725997727,
+        13.970567586999096,
+        13.886696032997861,
+        13.901047909996123,
+        13.910508963999746,
+        13.909283765002328,
+        13.92072448500403,
+        13.914743592999002,
+        13.825678795998101
+      ],
+      "updates": 1584,
+      "examples": 405000,
+      "peak_allocated_bytes": 847234048,
+      "peak_reserved_bytes": 1098907648,
+      "parameters": 45450,
+      "trainable_parameters": 32138,
+      "final_train": {
+        "ce": 0.8526708380805121,
+        "accuracy": 0.6965111111111111
+      },
+      "final_dev": {
+        "ce": 0.8950390380859375,
+        "accuracy": 0.675
+      },
+      "dev_minus_train_ce": 0.042368200005425405,
+      "dev_minus_train_accuracy": -0.021511111111111036,
+      "arm_order": [
+        "cnn",
+        "learned",
+        "static",
+        "dynamic"
+      ],
+      "final": "checkpoints/1702-dynamic-final.json",
+      "selected": "checkpoints/1702-dynamic-training-selected.json"
+    }
+  ],
+  "source_sha256": "839d476509322cca7de6614a04661c94f4c154abfd4fe8b5a571b295677e526a",
+  "device": "NVIDIA GeForce RTX 2070",
+  "torch_version": "2.8.0+cu128",
+  "cuda_version": "12.8",
+  "elapsed_seconds": 763.1885935390019,
+  "training_seconds": 706.4052323489886,
+  "development_evaluated": true,
+  "limitations": "Established input-conditioned dynamic convolution family; two frozen filters per channel and pooled-input softmax gate, matched static all-ones input gate; no architecture invention claim. Static gate parameter redundancy and unequal effective capacity; learned ConvMixer/CNN unequal capacity and compute; optimization seeds on one split; no test",
+  "projection": "Use per-arm epoch timings and observed preparation/artifact overhead; freeze future jobs before dev evaluation; no padding or automatic extension"
+}
