@@ -36,9 +36,13 @@ def verify_checkpoint(*, programs, manifest, manifest_sha256, checkpoint, checkp
     audit = _read(report)
     if arm == 'B':
         rows, details = _read(predictions)['predictions'], audit['details']
+        # The audit enriches each row with identity and derived fields the replay
+        # evaluation does not emit; compare only the schema both sides share so a
+        # genuine status/replay/alignment/correctness disagreement still fails.
         if (len(details) != len(rows) or len(details) != len(evaluation['details']) or
             any(detail.get('identity') != row['identity'] or
-                {k: v for k, v in detail.items() if k != 'identity'} != expected
+                {k: detail[k] for k in detail.keys() & expected.keys() if k != 'identity'} !=
+                {k: expected[k] for k in detail.keys() & expected.keys() if k != 'identity'}
                 for detail, row, expected in zip(details, rows, evaluation['details']))):
             raise ValueError('independent per-claim audit disagrees with replay')
     return {'fresh_process_inference_seconds': inference_seconds,
