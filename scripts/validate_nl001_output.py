@@ -74,7 +74,7 @@ def validate(root):
     if not isinstance(result, dict):
         raise ValueError('invalid result contract')
     metrics, summary = result.get('metrics'), result.get('summary')
-    if (not isinstance(metrics, dict) or not 1 <= len(metrics) <= 32 or
+    if (not isinstance(metrics, dict) or not 1 <= len(metrics) <= 128 or
             any(not isinstance(k, str) or not 1 <= len(k) <= 80 or
                 type(v) not in (int, float) or not math.isfinite(v)
                 for k, v in metrics.items()) or

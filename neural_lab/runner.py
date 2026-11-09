@@ -15,6 +15,7 @@ class CleanupError(RuntimeError):
 
 
 MAX_RESULT_BYTES = 65536
+MAX_RESULT_METRICS = 128
 
 
 def read_json_file(directory, filename, *, limit=MAX_RESULT_BYTES):
@@ -39,8 +40,8 @@ def read_result(directory):
         raise ValueError("Result must be an object")
     metrics = value.get("metrics")
     summary = value.get("summary")
-    if not isinstance(metrics, dict) or not 1 <= len(metrics) <= 32:
-        raise ValueError("Expected 1-32 metrics")
+    if not isinstance(metrics, dict) or not 1 <= len(metrics) <= MAX_RESULT_METRICS:
+        raise ValueError(f"Expected 1-{MAX_RESULT_METRICS} metrics")
     for key, number in metrics.items():
         if not isinstance(key, str) or not 1 <= len(key) <= 80:
             raise ValueError("Invalid metric name")
@@ -124,7 +125,11 @@ class DockerRunner:
                 if running == "false":
                     if exit_code != "0":
                         return {"status": "failed", "error": "Worker exited with code " + exit_code}
-                    return {"status": "succeeded", "result": read_result(output_dir)}
+                    try:
+                        result = read_result(output_dir)
+                    except ValueError as exc:
+                        return {"status": "failed", "error": f"Invalid worker result: {exc}"[:200]}
+                    return {"status": "succeeded", "result": result}
                 stop.wait(min(1.0, max(0.0, deadline - time.monotonic())))
         finally:
             # A cleanup failure propagates: do not launch another GPU job if one

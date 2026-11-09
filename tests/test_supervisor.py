@@ -161,6 +161,17 @@ class SupervisorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_result(root)
 
+    def test_result_reader_accepts_substantive_metrics_and_enforces_limit(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = Path(root) / "result.json"
+            metrics = {f"metric_{i}": i for i in range(128)}
+            target.write_text(json.dumps({"metrics": metrics, "summary": "Complete"}))
+            self.assertEqual(read_result(root)["metrics"], metrics)
+            metrics["overflow"] = 1
+            target.write_text(json.dumps({"metrics": metrics, "summary": "Complete"}))
+            with self.assertRaisesRegex(ValueError, "Expected 1-128 metrics"):
+                read_result(root)
+
     def test_plan_schema_rejects_container_controls_and_oversized_code(self):
         self.assertEqual(validate_plan({"hypothesis": "test", "code": "pass"}).code, "pass")
         for invalid in (
