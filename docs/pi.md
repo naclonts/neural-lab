@@ -65,14 +65,48 @@ bash scripts/pi-auth.sh status
 bash scripts/research.sh start-pi
 ```
 
-`start-pi` validates readiness with `doctor --planner pi`, then starts the worker
-and the `pi-orchestrator` service. The orchestrator container runs
+`start-pi` normally validates readiness with `doctor --planner pi`, then starts
+the worker and the `pi-orchestrator` service. With `PI_PROVIDER=ollama`, it
+uses the non-inference demo readiness checks instead, so startup cannot load a
+model while a worker may be using the GPU. The orchestrator container runs
 `python3 -m neural_lab.orchestrator --backend pi`; `--backend` defaults to
 `NEURAL_LAB_ORCH_BACKEND` (default `codex`), so the Codex path is unchanged.
 The default model is `NEURAL_LAB_ORCH_MODEL` (`anthropic/claude-sonnet-4.5` in
 the pi service). The orchestrator drives `pi --mode rpc --no-session` over JSONL
 records, prepends the previous private handoff, and writes handoff notes to
 `.neural-lab/notes/latest-session.json` with `"backend": "pi"`.
+
+### Sharing a GPU with Ollama
+
+When `PI_PROVIDER=ollama`, the GPU queue worker and the pi orchestrator coordinate
+through the shared `.neural-lab` state directory. Before launching a queued GPU
+job, the worker requests the GPU and waits. The orchestrator interrupts and
+closes its pi session, asks Ollama to unload its loaded models, and verifies that
+Ollama reports no loaded models before acknowledging the request. The worker
+does not launch the job if this confirmation is unavailable. The orchestrator
+does not start another pi session while the worker holds the request. CPU-only
+workers do not use this handoff.
+
+Set `OLLAMA_BASE_URL` in `.env` to the base URL of the **same Ollama server**
+used by the pi provider. The Compose default is `http://127.0.0.1:11434`.
+The pi orchestrator uses host networking so it can reach a loopback-only Ollama
+listener. This also permits it to reach other services listening on the host's
+loopback interfaces; take that into account when configuring those services.
+Changing
+`OLLAMA_BASE_URL` configures the handoff, not pi's provider; configure pi to use
+the same server separately. The handoff unloads all models reported by that
+server, including models loaded by other clients, so use a dedicated server when
+other clients must remain running. Other clients must not load models on the
+shared GPU during a worker job.
+
+Set `PI_PROVIDER=ollama` for both processes when running them outside Compose,
+and give them the same state directory. If Ollama is unreachable, the URL is
+incorrect, or the pi orchestrator is stopped, the job remains queued until the
+handoff succeeds. Check the orchestrator logs and server configuration before
+retrying. Recreate both Compose services after changing `.env`; an existing
+container retains its original environment. The standalone `pi-auth.sh status`
+and `manage doctor --planner pi` commands perform inference outside this
+handooff; do not run them while a GPU experiment is active.
 
 ### Context handoff
 

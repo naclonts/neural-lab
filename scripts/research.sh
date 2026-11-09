@@ -25,9 +25,19 @@ case "$operation" in
     ;;
   start-pi)
     bash scripts/setup.sh
-    # The pi backend uses pay-per-token API billing; require a working key.
-    bash scripts/pi-auth.sh status
-    python3 -m neural_lab.manage doctor --planner pi
+    export NEURAL_LAB_GPU_BACKEND
+    NEURAL_LAB_GPU_BACKEND="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["worker"]["environment"]["NEURAL_LAB_GPU_BACKEND"])')"
+    training_image="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["worker"]["environment"]["NEURAL_LAB_WORKER_IMAGE"])')"
+    provider="$("${compose[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["pi-orchestrator"]["environment"]["PI_PROVIDER"])')"
+    if [ "$provider" = ollama ]; then
+      # Both pi auth probes perform inference outside the worker handoff.  A
+      # running experiment could already own the GPU, so check host readiness
+      # without calling pi; the orchestrator verifies Ollama during handoff.
+      python3 -m neural_lab.manage doctor --planner demo --image "$training_image"
+    else
+      bash scripts/pi-auth.sh status
+      python3 -m neural_lab.manage doctor --planner pi --image "$training_image"
+    fi
     "${compose[@]}" up -d --build worker pi-orchestrator
     "${compose[@]}" ps
     ;;

@@ -35,6 +35,7 @@ services:
       NEURAL_LAB_GPU_BACKEND: ${NEURAL_LAB_GPU_BACKEND:-docker}
       NEURAL_LAB_WORKER_IMAGE: ${NEURAL_LAB_WORKER_IMAGE:-neural-lab-training:torch2.8-hf}
       NEURAL_LAB_TOOLKIT_HOST_PATH: ${LAB_REPO_DIR}/neural_lab
+      PI_PROVIDER: ${PI_PROVIDER:-anthropic}
     tmpfs: [/tmp]
     logging:
       driver: json-file
@@ -100,6 +101,9 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 4
+    # Host networking allows access to a loopback-only host Ollama service.
+    # This also gives the research container access to other host services.
+    network_mode: host
     tmpfs: ["/tmp:rw,nosuid,nodev,size=1g,mode=1777"]
     volumes:
       - type: bind
@@ -115,12 +119,14 @@ services:
     environment:
       LAB_UID: ${LAB_UID:?Run setup}
       LAB_GID: ${LAB_GID:?Run setup}
-      PI_CODING_AGENT_DIR: /pi
+      PI_CODING_AGENT_DIR: ${PI_CODING_AGENT_DIR:-/pi}
       PYTHONDONTWRITEBYTECODE: "1"
       NEURAL_LAB_ORCH_MODEL: ${NEURAL_LAB_ORCH_MODEL:-anthropic/claude-sonnet-4.5}
       NEURAL_LAB_PI_BUDGET_SECONDS: ${NEURAL_LAB_PI_BUDGET_SECONDS:-14400}
       NEURAL_LAB_PI_BUDGET_SESSIONS: ${NEURAL_LAB_PI_BUDGET_SESSIONS:-8}
       PI_PROVIDER: ${PI_PROVIDER:-anthropic}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      NEURAL_LAB_PI_CONTEXT_WINDOW: ${NEURAL_LAB_PI_CONTEXT_WINDOW:-}
     logging:
       driver: json-file
       options:

@@ -14,6 +14,7 @@ import stat
 import sys
 import threading
 import time
+import tempfile
 import uuid
 
 from neural_lab.manage import check_readiness
@@ -92,6 +93,9 @@ class Queue:
             self.db.execute("UPDATE jobs SET status='running', started_at=? WHERE id=?", (time.time(), row["id"]))
         return dict(row)
 
+    def has_queued_job(self) -> bool:
+        return self.db.execute("SELECT 1 FROM jobs WHERE status='queued' LIMIT 1").fetchone() is not None
+
     def finish(self, job_id: str, outcome: dict) -> None:
         status = outcome["status"]
         if status not in {"succeeded", "failed", "interrupted"}:
@@ -129,6 +133,40 @@ def worker_lock(root: Path):
             yield
         finally:
             fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def clear_gpu_request(root: Path) -> None:
+    """Release the GPU only after the experiment container is confirmed gone."""
+    (root / "ollama-gpu-request").unlink(missing_ok=True)
+
+
+def wait_for_ollama_gpu(root: Path, stop: threading.Event) -> bool:
+    """Request exclusive GPU use and wait for the orchestrator's verified unload.
+
+    The request remains present until the worker has removed the experiment
+    container. A unique nonce prevents an old acknowledgement from releasing a
+    later job. A missing or failed orchestrator leaves the job queued.
+    """
+    token = uuid.uuid4().hex
+    request = root / "ollama-gpu-request"
+    (root / "ollama-gpu-ack").unlink(missing_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".ollama-gpu-request-", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(token)
+        os.replace(temp, request)
+    finally:
+        Path(temp).unlink(missing_ok=True)
+    print(json.dumps({"status": "waiting_for_ollama_gpu"}), flush=True)
+    while not stop.is_set():
+        try:
+            if (root / "ollama-gpu-ack").read_text(encoding="ascii") == token:
+                return True
+        except (OSError, UnicodeError):
+            pass
+        stop.wait(1)
+    clear_gpu_request(root)
+    return False
 
 
 def run_job(queue: Queue, row: dict, stop: threading.Event, *, image: str, gpu: str | None) -> dict:
@@ -186,6 +224,9 @@ def main(argv=None):
         with worker_lock(queue.root):
             DockerRunner(queue.owner, image=args.image, gpu=gpu).recover()
             queue.recover()
+            # A previous worker may have died while its experiment was still
+            # running. Never clear its request before label-scoped recovery.
+            clear_gpu_request(queue.root)
             checks = check_readiness(
                 state_dir=queue.root, image=args.image, planner="demo", auth_dir=None,
                 gpu=gpu, minimum_gb=10,
@@ -194,8 +235,19 @@ def main(argv=None):
                 print(json.dumps({"status": "preflight_failed", "checks": checks}))
                 return 1
             while not stop.is_set():
+                shared_gpu = gpu is not None and os.environ.get("PI_PROVIDER") == "ollama"
+                if shared_gpu:
+                    if not queue.has_queued_job():
+                        if args.once:
+                            break
+                        stop.wait(args.idle_seconds)
+                        continue
+                    if not wait_for_ollama_gpu(queue.root, stop):
+                        break
                 row = queue.next_job()
                 if row is None:
+                    if shared_gpu:
+                        clear_gpu_request(queue.root)
                     if args.once:
                         break
                     stop.wait(args.idle_seconds)
@@ -208,6 +260,8 @@ def main(argv=None):
                 except Exception as exc:
                     outcome = {"status": "failed", "error": type(exc).__name__}
                 queue.finish(row["id"], outcome)
+                if shared_gpu:
+                    clear_gpu_request(queue.root)
                 print(json.dumps({"id": row["id"], **outcome}), flush=True)
                 if args.once:
                     break

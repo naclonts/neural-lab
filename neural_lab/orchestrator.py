@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import subprocess
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 from collections import deque
 
 from neural_lab.research_direction import RESEARCH_DIRECTION
@@ -633,7 +635,7 @@ def resolve_pi_context_window(model: str) -> int | None:
     a context window on the wire, so this catalog is the only window source.
     """
     override = os.environ.get("NEURAL_LAB_PI_CONTEXT_WINDOW")
-    if override is not None:
+    if override:
         try:
             value = int(override)
         except ValueError:
@@ -901,6 +903,61 @@ def record_pi_budget(repo: Path, seconds: float) -> None:
     write_handoff(repo, value, filename="pi-budget.json")
 
 
+def gpu_request(state: Path) -> str | None:
+    """Read a complete worker request, ignoring a partially written request."""
+    try:
+        token = (state / "ollama-gpu-request").read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return None
+    return token if re.fullmatch(r"[0-9a-f]{32}", token) else None
+
+
+def unload_ollama(base_url: str) -> None:
+    """Unload every resident model and verify that Ollama reports none loaded."""
+    base_url = base_url.rstrip("/")
+
+    def request(path, payload=None):
+        body = None if payload is None else json.dumps(payload).encode()
+        headers = {} if body is None else {"Content-Type": "application/json"}
+        req = urllib.request.Request(base_url + path, data=body, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.load(response)
+
+    def loaded():
+        response = request("/api/ps")
+        if not isinstance(response, dict) or not isinstance(response.get("models"), list):
+            raise ValueError("invalid Ollama process listing")
+        models = response["models"]
+        if any(not isinstance(m, dict) or not isinstance(m.get("name"), str)
+               or not m["name"] for m in models):
+            raise ValueError("invalid Ollama model listing")
+        return [m["name"] for m in models]
+
+    for model in loaded():
+        request("/api/generate", {"model": model, "keep_alive": 0, "stream": False})
+    if loaded():
+        raise RuntimeError("Ollama models remain loaded")
+
+
+def acknowledge_gpu_request(state: Path, base_url: str) -> bool:
+    """Release Ollama and acknowledge only the request that was verified."""
+    token = gpu_request(state)
+    if token is None:
+        return False
+    unload_ollama(base_url)
+    if gpu_request(state) != token:
+        return False
+    fd, name = tempfile.mkstemp(prefix=".ollama-gpu-ack-", dir=state)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(token)
+        os.replace(name, state / "ollama-gpu-ack")
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    return True
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=("pi", "codex"),
@@ -928,13 +985,34 @@ def main(argv=None) -> int:
     notes = args.repo / ".neural-lab" / "notes"
     notes.mkdir(parents=True, exist_ok=True, mode=0o700)
     stop = threading.Event()
+    shutdown = threading.Event()
+    ollama = args.backend == "pi" and os.environ.get("PI_PROVIDER", "").lower() == "ollama"
+    state = args.repo / ".neural-lab"
+    monitor_done = threading.Event()
+    monitor = None
+    if ollama:
+        def watch_worker():
+            while not monitor_done.is_set():
+                if gpu_request(state) is not None:
+                    stop.set()
+                    return
+                monitor_done.wait(0.25)
+        monitor = threading.Thread(target=watch_worker, daemon=True)
+        monitor.start()
     consecutive_failures = 0
     paused = False
     prior_handlers = {name: signal.getsignal(name) for name in (signal.SIGINT, signal.SIGTERM)}
     for name in prior_handlers:
-        signal.signal(name, lambda *_: stop.set())
+        def request_shutdown(*_):
+            shutdown.set()
+            stop.set()
+        signal.signal(name, request_shutdown)
     try:
         while not stop.is_set():
+            # Close the startup race with the monitor before starting a session.
+            if ollama and gpu_request(state) is not None:
+                stop.set()
+                break
             if args.backend == "pi":
                 permitted, reason = budget_ok(
                     args.repo / ".neural-lab" / "notes" / "pi-budget.json",
@@ -1005,6 +1083,26 @@ def main(argv=None) -> int:
                       filename="pause-state.json")
         return 0
     finally:
+        monitor_done.set()
+        if monitor is not None:
+            monitor.join()
+        if ollama and gpu_request(state) is not None:
+            try:
+                while not shutdown.is_set():
+                    token = gpu_request(state)
+                    if token is None:
+                        break
+                    acknowledged = acknowledge_gpu_request(
+                        state, os.environ.get("OLLAMA_BASE_URL", "http://host.docker.internal:11434"))
+                    if acknowledged:
+                        print(json.dumps({"orchestrator": "gpu_released"}), flush=True)
+                    # A new request can replace the previous one between polls.
+                    # Acknowledge each nonce without restarting Pi in between.
+                    while gpu_request(state) == token and not shutdown.wait(0.5):
+                        pass
+            except Exception as exc:
+                print(json.dumps({"orchestrator": "gpu_release_failed",
+                                  "error": type(exc).__name__}), flush=True)
         for name, handler in prior_handlers.items():
             signal.signal(name, handler)
 
