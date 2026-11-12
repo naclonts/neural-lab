@@ -95,7 +95,8 @@ services:
     command: ["python3", "-m", "neural_lab.orchestrator", "--backend", "pi"]
     working_dir: /repo
     init: true
-    restart: unless-stopped
+    # Start manually; keep the local scientist off across host reboots.
+    restart: "no"
     # Writable container filesystem and sudo permit package installation.
     # Docker namespace isolation remains the host boundary.
     pids_limit: 512

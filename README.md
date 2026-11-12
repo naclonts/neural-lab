@@ -141,6 +141,32 @@ legacy MLP controls and candidates automatically. Read [research stack setup](do
 for account setup, job recovery, and results. Docker and NVIDIA access must be
 validated on the target laptop.
 
+### Local scientist startup and shutdown
+
+The Pi/Ollama scientist (`pi-orchestrator`) starts manually: its
+`restart: "no"` policy in `compose.research.yaml` disables automatic restart
+after a crash or host reboot. The local scientist was stopped and its Qwen model
+unloaded on November 11, 2026; experiment results and notes are preserved.
+
+Run these commands from this repository to resume it:
+
+```bash
+bash scripts/research.sh resume-research pi-orchestrator
+```
+
+To stop it and release the model's GPU memory:
+
+```bash
+bash scripts/research.sh pause-research pi-orchestrator
+ollama stop neural-lab-qwen3.6:35b
+```
+
+To restore automatic startup, change only `pi-orchestrator.restart` in
+`compose.research.yaml` to `unless-stopped`, then apply it with
+`docker compose -f compose.research.yaml up -d pi-orchestrator`.
+Manual resume leaves automatic startup disabled. The queue worker and dashboard
+have their own restart policies; pausing the scientist leaves them running.
+
 ## Live experiment dashboard
 
 ```bash
